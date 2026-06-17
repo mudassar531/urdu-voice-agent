@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 GCP_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 GCP_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY", "")
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIM = 768  # Matryoshka — 768 keeps ~99% retrieval quality at 4x smaller than default 3072
 
@@ -77,15 +78,21 @@ def load_faqs_from_json(filepath: str) -> list[dict]:
 
 
 async def embed_texts(texts: list[str], batch_size: int = 10) -> list[list[float]]:
-    """Embed texts using Gemini via Vertex AI (auth from ADC on the VM's attached SA)."""
+    """Embed texts using Gemini. Prefers Google AI Studio (GOOGLE_API_KEY) when set,
+    otherwise falls back to Vertex AI ADC for the VM-attached service account.
+    """
     try:
         from google import genai
         from google.genai.types import EmbedContentConfig
-
-        client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GCP_LOCATION)
-        logger.info("Using google.genai SDK (Vertex) for embeddings")
     except ImportError:
         raise ImportError("google-genai package required. Install: pip install google-genai")
+
+    if GOOGLE_API_KEY:
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+        logger.info("Using google.genai SDK (AI Studio API key) for embeddings")
+    else:
+        client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GCP_LOCATION)
+        logger.info("Using google.genai SDK (Vertex) for embeddings")
 
     embeddings = []
     total_batches = (len(texts) + batch_size - 1) // batch_size

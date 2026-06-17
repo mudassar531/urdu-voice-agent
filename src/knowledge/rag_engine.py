@@ -44,22 +44,34 @@ class RAGEngine:
         self,
         qdrant_url: str | None = None,
     ):
-        from utils.vertex_region import resolve_location, vertex_endpoint
-
         # .strip() guards against trailing whitespace / CR from CRLF .env files —
         # qdrant-client refuses to parse "http://localhost:6333\r".
         self._qdrant_url = (qdrant_url or os.getenv("QDRANT_URL", "http://localhost:6333")).strip()
         self._qdrant_client: Any | None = None
         self._initialized = False
         self._loop = None
-        self._vertex_location = resolve_location("gemini-embedding-001")
+
+        # Skip the Vertex region probe when an AI Studio API key is configured —
+        # _get_embedding will route through the API key path instead.
+        if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
+            self._vertex_location = "global"
+            register_service_route(
+                "gemini_embeddings",
+                "https://generativelanguage.googleapis.com",
+                provider="google_ai_studio",
+                notes="google.genai embedding requests for RAG (AI Studio key)",
+            )
+        else:
+            from utils.vertex_region import resolve_location, vertex_endpoint
+
+            self._vertex_location = resolve_location("gemini-embedding-001")
+            register_service_route(
+                "gemini_embeddings",
+                vertex_endpoint(self._vertex_location),
+                provider="vertex-ai",
+                notes="google.genai embedding requests for RAG (Vertex)",
+            )
         register_service_route("qdrant", self._qdrant_url, provider="qdrant")
-        register_service_route(
-            "gemini_embeddings",
-            vertex_endpoint(self._vertex_location),
-            provider="vertex-ai",
-            notes="google.genai embedding requests for RAG (Vertex)",
-        )
 
     async def _ensure_initialized(self) -> None:
         """Lazy init: connect to Qdrant on first use."""
@@ -160,18 +172,29 @@ class RAGEngine:
         return False
 
     async def _get_embedding(self, text: str) -> list[float] | None:
-        """Generate embedding using Gemini."""
+        """Generate embedding using Gemini.
+
+        Prefers the Google AI Studio API key path (``GOOGLE_API_KEY`` /
+        ``GEMINI_API_KEY``) when set, otherwise falls back to Vertex AI with
+        Application Default Credentials.
+        """
         try:
+            import os
+
             from google import genai
             from google.genai.types import EmbedContentConfig
 
             from utils.vertex_region import PROJECT
 
-            client = genai.Client(
-                vertexai=True,
-                project=PROJECT,
-                location=self._vertex_location,
-            )
+            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            if api_key:
+                client = genai.Client(api_key=api_key)
+            else:
+                client = genai.Client(
+                    vertexai=True,
+                    project=PROJECT,
+                    location=self._vertex_location,
+                )
 
             with network_request_context(
                 "gemini_embeddings",

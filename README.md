@@ -127,38 +127,42 @@ Full runbook: `BLUEPRINT-PLAN.md` §4 (in the research bundle).
 
 ## Urdu integration seams
 
-> **This is the core extension point of this repo.** Everything below is a
-> deliberate STUB / TODO. The free-text `personality.system_prompt`, `greeting`,
-> and KB content can be authored in Urdu immediately — only the speech engines
-> and a few framework prompt fragments need code.
+> **The Urdu STT and TTS seams are now wired to real engines** —
+> Speechmatics (real-time streaming Urdu STT) and Azure Cognitive Services
+> (neural Urdu voices). Free-text `personality.system_prompt`, `greeting`,
+> and KB content can be authored directly in Urdu / Roman-Urdu.
 
-Edit exactly these files/functions (each is marked with `TODO(urdu)` in code):
+Status of each seam:
 
-- [ ] **STT engine** — implement `src/pipeline/providers/urdu_stt.py`
-      (`UrduSTT`). Model it on `custom_stt.py` (HTTP/batch) or `navai_ws_stt.py`
-      (streaming + barge-in). Reads `URDU_STT_URL`.
-- [ ] **TTS engine** — implement `src/pipeline/providers/urdu_tts.py`
-      (`UrduTTS`). Model it on `custom_tts.py` (HTTP/batch) or `navai_ws_tts.py`
-      (streaming `ChunkedStream`). Reads `URDU_TTS_URL` / `URDU_VOICE_ID`.
-- [x] **Factory dispatch** — `src/pipeline/voice_factory.py` already has
-      `elif provider == "urdu_stt"` / `"urdu_tts"` branches wired to the stubs.
-- [x] **Locale map** — `_LANG_MAP` in `voice_factory.py` already maps
-      `"ur" → "ur-PK"` (required, or `ur` silently falls back to `uz-UZ`).
-- [ ] **Tenant config** — set `voice.stt_provider: urdu_stt`,
-      `voice.tts_provider: urdu_tts`, `voice.voices: {ur: <voice>}`, and
-      `languages: {default: ur, available: [ur]}` in the tenant YAML.
+- [x] **STT engine** — `src/pipeline/providers/urdu_stt.py` (`UrduSTT`)
+      subclasses `livekit.plugins.speechmatics.STT`. Reads
+      `SPEECHMATICS_API_KEY` (and optionally `URDU_STT_URL` to override the
+      default `wss://eu2.rt.speechmatics.com/v2`).
+- [x] **TTS engine** — `src/pipeline/providers/urdu_tts.py` (`UrduTTS`)
+      subclasses `livekit.plugins.azure.TTS`. Reads `AZURE_SPEECH_KEY` plus
+      either `AZURE_SPEECH_REGION` or `AZURE_SPEECH_ENDPOINT`. Default voice
+      is `ur-PK-UzmaNeural`; override via `voice.tts_voice_id` /
+      `voice.voices` in the YAML or `URDU_VOICE_ID` env.
+- [x] **Factory dispatch** — `src/pipeline/voice_factory.py` routes
+      `voice.stt_provider: urdu_stt` and `voice.tts_provider: urdu_tts` to
+      the implementations above. The `gemini_api` LLM provider lets the
+      agent run with a Google AI Studio key (no Vertex ADC required).
+- [x] **Locale map** — `_LANG_MAP` in `voice_factory.py` maps
+      `"ur" → "ur-PK"`.
+- [x] **Tenant config** — see `configs/tenants/hashim-girls-hostel.yaml`
+      for a working Urdu single-language tenant.
 - [ ] **Localized prompt fragments** — `src/agents/factory.py`
       (`_build_instructions`, `_csat_policy_instructions`,
-      `_response_format_instructions`) have hard-coded Uzbek/Russian policy text
-      with `TODO(urdu)` markers and `ur` stub branches that currently fall back
-      to the default. Add Urdu text there for natural framework prompts.
-- [ ] **`get_current_time` tool** — `src/tools/platform/get_time.py` returns an
-      Uzbek-formatted sentence (TZ is already config-driven, default
-      `Asia/Karachi`). Add Urdu phrasing when wiring an Urdu tenant.
-- [x] **Timezone** — out-of-hours check is config-driven
-      (`transfer.timezone`, default `Asia/Karachi`) in
-      `src/tools/platform/escalate.py`.
-- [ ] **`.env`** — set `URDU_STT_URL`, `URDU_TTS_URL`, `URDU_VOICE_ID`.
+      `_response_format_instructions`) still have hard-coded Uzbek/Russian
+      policy text with `TODO(urdu)` markers. Add Urdu phrasing there for
+      maximum naturalness.
+- [ ] **`get_current_time` tool** — `src/tools/platform/get_time.py`
+      returns an Uzbek-formatted sentence (TZ defaults to `Asia/Karachi`).
+      Add Urdu phrasing when polish is needed.
+- [x] **Timezone** — `transfer.timezone` defaults to `Asia/Karachi`.
+- [x] **`.env`** — set `SPEECHMATICS_API_KEY`, `AZURE_SPEECH_KEY`,
+      `AZURE_SPEECH_REGION` (or `AZURE_SPEECH_ENDPOINT`), and
+      `GOOGLE_API_KEY` for the `gemini_api` LLM path.
 
 See `BLUEPRINT-PLAN.md` §3 for the full seam spec.
 

@@ -26,3 +26,6 @@ htmlcov/
 eval/reports/
 .playwright-mcp/
 /docs/superpowers/
+
+# Silero VAD model cache (downloaded at runtime by livekit-plugins-silero)
+.models/

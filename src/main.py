@@ -11,8 +11,8 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from livekit.agents import AgentServer, JobContext, JobProcess, cli
-from livekit.plugins import silero
+from livekit.agents import AgentServer, JobContext, JobProcess, RoomInputOptions, cli
+from livekit.plugins import noise_cancellation, silero
 
 from agents.factory import AgentFactory, set_factory
 from api.platform_client import get_platform_client
@@ -378,7 +378,18 @@ async def entrypoint(ctx: JobContext):
     # 11. Start session and connect
     if telephony_tracker:
         telephony_tracker.mark_session_started()
-    await session.start(agent=agent, room=ctx.room)
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        # BVC (Background Voice Cancellation) rejects the agent's own echo
+        # captured by the caller's mic AND background voices that aren't the
+        # primary speaker. This is the practical fix for the "STT keeps
+        # transcribing ایکس ایکس when nobody is speaking" feedback loop in
+        # the LiveKit playground (no AEC in the browser by default).
+        room_input_options=RoomInputOptions(
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
+    )
     if hasattr(agent, "_start_silence_monitor"):
         agent._start_silence_monitor()
     await ctx.connect()

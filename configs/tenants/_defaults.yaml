@@ -110,3 +110,4 @@ observability:
 # "<dir>_faq".
 repopulate_kb:
   example_tenant: false
+  hashim_girls_hostel: false

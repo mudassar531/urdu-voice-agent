@@ -1,119 +1,97 @@
 """
-Urdu STT (Speech-to-Text) provider — STUB / integration seam.
+Urdu STT (Speech-to-Text) provider — Speechmatics real-time backend.
 
->>> TODO(urdu): IMPLEMENT THIS. This is a blueprint stub, NOT a working engine.
+Thin wrapper around `livekit.plugins.speechmatics.STT` so the existing
+`urdu_stt` factory branch (`src/pipeline/voice_factory.py`) keeps a stable
+class shape while we delegate the heavy lifting to Speechmatics' streaming
+real-time API. Speechmatics natively supports Urdu (`ur`), so no extra
+locale mapping is needed beyond stripping the `-PK` suffix.
 
-This class is the Urdu STT integration seam referenced by
-`VoiceFactory.create_stt_for_language` (branch `provider == "urdu_stt"`) and by
-the README "Urdu integration seams" section. It imports cleanly so the repo
-loads, but every method raises NotImplementedError until you wire a real engine.
-
-HOW TO IMPLEMENT
-----------------
-Copy the shape of an existing, working provider and adapt it to your Urdu engine:
-
-  * HTTP / batch GPU server  -> copy `src/pipeline/providers/custom_stt.py`
-      (`CustomSTT`): `STTCapabilities(streaming=False, interim_results=False)`,
-      implement `async def _recognize_impl(self, buffer, *, language=None,
-      conn_options=None) -> stt.SpeechEvent`. POST WAV bytes to your server,
-      parse the transcript, return a FINAL_TRANSCRIPT SpeechEvent. This is the
-      simplest starting point and matches a GPU batch STT server.
-
-  * WebSocket / streaming      -> copy `src/pipeline/providers/navai_ws_stt.py`
-      (`NavaiWSSTT`): `STTCapabilities(streaming=True, interim_results=True)`,
-      implement `stream()` returning a RecognizeStream that does its OWN VAD
-      endpointing (uses the injected Silero `vad`). Required for barge-in /
-      interim transcripts.
-
-REQUIREMENTS (from doc 01 §4e)
-------------------------------
-  * Subclass `livekit.agents.stt.STT` and set capabilities in `super().__init__`.
-  * Audio prep: convert input to PCM16 mono and resample to your server's rate
-    (see the `np.interp` resample pattern in custom_stt.py `_prepare_wav`).
-  * Read your endpoint from env: `URDU_STT_URL` (add it to `.env.example`).
-  * Conventionally call `register_service_route(...)` for the topology view and
-    expose `_on_first_audio` / `_on_stt_duration` callbacks for telemetry.
-
-CONFIG WIRING
--------------
-  voice.stt_provider: urdu_stt          # or voice.stt_providers: {ur: urdu_stt}
-  languages: {default: ur, available: [ur]}
-  # .env: URDU_STT_URL=...
+Auth comes from `SPEECHMATICS_API_KEY` (read by the plugin itself) — see
+`.env.example`. The plugin already exposes streaming + interim transcripts
+which the agent uses for barge-in.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Optional, Union
+from typing import Any
 
-from livekit import rtc
-from livekit.agents import stt
+from livekit.plugins.speechmatics import STT as SpeechmaticsSTT
 
 from observability.network_topology import register_service_route
 
 logger = logging.getLogger(__name__)
 
-_NOT_IMPLEMENTED_MSG = (
-    "TODO(urdu): implement Urdu STT — see README 'Urdu integration seams' "
-    "and the docstring in src/pipeline/providers/urdu_stt.py (model on "
-    "custom_stt.py for HTTP/batch or navai_ws_stt.py for streaming)."
-)
+_SPEECHMATICS_RT_DEFAULT = "wss://eu2.rt.speechmatics.com/v2"
 
 
-class UrduSTT(stt.STT):
-    """STUB Urdu STT provider. Raises NotImplementedError until wired."""
+def _resolve_language(language: str | None) -> str:
+    """Normalize an incoming locale (e.g. ``ur-PK``) to a Speechmatics code (``ur``)."""
+    if not language:
+        return "ur"
+    return language.split("-")[0].lower()
+
+
+def _resolve_api_key() -> str | None:
+    """Pick the first present Speechmatics API key from the env."""
+    return (
+        os.getenv("SPEECHMATICS_API_KEY")
+        or os.getenv("SPEECHMATICS_STT_KEY")
+        or os.getenv("URDU_STT_API_KEY")
+    )
+
+
+class UrduSTT(SpeechmaticsSTT):
+    """Urdu STT backed by Speechmatics real-time transcription."""
 
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         base_url: str | None = None,
         language: str = "ur-PK",
         sample_rate: int = 16000,
         vad: Any = None,
+        **_unused: Any,
     ) -> None:
-        # Default to a non-streaming batch shape (simplest). Switch to
-        # streaming=True / interim_results=True when modeling on navai_ws_stt.py.
-        super().__init__(
-            capabilities=stt.STTCapabilities(
-                streaming=False,
-                interim_results=False,
+        resolved_key = api_key or _resolve_api_key()
+        if not resolved_key:
+            raise RuntimeError(
+                "Urdu STT requires SPEECHMATICS_API_KEY (or SPEECHMATICS_STT_KEY) — "
+                "set it in your .env."
             )
-        )
-        self._base_url = (base_url or os.getenv("URDU_STT_URL", "")).rstrip("/")
-        self._language = language
-        self._sample_rate = sample_rate
-        self._vad = vad
 
-        # Telephony timing callbacks (set by main.py). Kept for parity with the
-        # other providers so a real implementation can fire them.
+        sm_language = _resolve_language(language)
+        resolved_base_url = base_url or os.getenv("URDU_STT_URL") or _SPEECHMATICS_RT_DEFAULT
+
+        super().__init__(
+            api_key=resolved_key,
+            base_url=resolved_base_url,
+            language=sm_language,
+            enable_partials=True,
+            sample_rate=sample_rate,
+        )
+
+        # Telephony timing callbacks (set by main.py); kept for parity with
+        # the other providers — Speechmatics already streams partials so we
+        # rely on the session's tracker hooks for latency reporting.
         self._first_audio_signaled = False
         self._on_first_audio = None
         self._on_stt_duration = None
+        self._vad = vad
+        self._language_label = language
 
-        if self._base_url:
-            register_service_route(
-                "urdu_stt",
-                self._base_url,
-                provider="urdu_stt",
-                metadata={"language": self._language},
-            )
-        logger.warning(
-            "UrduSTT is a STUB (url=%r, lang=%s). %s",
-            self._base_url or "<unset URDU_STT_URL>",
-            self._language,
-            _NOT_IMPLEMENTED_MSG,
+        register_service_route(
+            "urdu_stt",
+            resolved_base_url,
+            provider="speechmatics",
+            metadata={"language": sm_language, "session_locale": language},
         )
-
-    async def _recognize_impl(
-        self,
-        buffer: Union[rtc.AudioFrame, bytes],
-        *,
-        language: Optional[str] = None,
-        conn_options: Optional[dict] = None,
-    ) -> stt.SpeechEvent:
-        """TODO(urdu): transcribe `buffer` and return a SpeechEvent.
-
-        Reference implementation: custom_stt.py `_recognize_impl` (HTTP batch).
-        """
-        raise NotImplementedError(_NOT_IMPLEMENTED_MSG)
+        logger.info(
+            "UrduSTT (Speechmatics) initialized: url=%s, language=%s, sample_rate=%d",
+            resolved_base_url,
+            sm_language,
+            sample_rate,
+        )

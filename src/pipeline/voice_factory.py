@@ -214,6 +214,8 @@ class VoiceFactory:
 
         if provider == "gemini":
             return _create_gemini_llm(config)
+        elif provider in ("gemini_api", "google_ai_studio"):
+            return _create_gemini_api_llm(config)
         elif provider == "openai":
             return _create_openai_llm(config)
         elif provider == "lexantei":
@@ -262,6 +264,37 @@ def _create_gemini_llm(config: TenantConfig) -> Any:
         vertexai=True,
         project=PROJECT,
         location=location,
+    )
+
+
+def _create_gemini_api_llm(config: TenantConfig) -> Any:
+    """Create Google Gemini LLM via the Google AI Studio API key path.
+
+    Uses ``GOOGLE_API_KEY`` (or ``GEMINI_API_KEY``) instead of Vertex ADC, so the
+    agent can run without a GCP service account / project. Set the tenant's
+    ``llm.provider`` to ``gemini_api`` to enable.
+    """
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "gemini_api provider requires GOOGLE_API_KEY (or GEMINI_API_KEY) in the env."
+        )
+
+    register_service_route(
+        "gemini_llm",
+        "https://generativelanguage.googleapis.com",
+        provider="google_ai_studio",
+        metadata={"model": config.llm.model},
+        notes="LiveKit Google plugin requests for LLM generation (AI Studio key)",
+    )
+
+    temperature = min(config.llm.temperature, 0.3)
+
+    return _google_plugin.LLM(
+        model=config.llm.model,
+        temperature=temperature,
+        vertexai=False,
+        api_key=api_key,
     )
 
 
