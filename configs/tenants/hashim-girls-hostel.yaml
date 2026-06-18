@@ -10,7 +10,8 @@ tenant:
   id: "000000000000000000000010"
   slug: "hashim-girls-hostel"
   name: "Hashim Girls Hostel"
-  phone_numbers: []
+  phone_numbers:
+    - "+19475461076"
 
 personality:
   system_prompt: |
