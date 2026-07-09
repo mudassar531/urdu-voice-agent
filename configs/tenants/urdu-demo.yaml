@@ -2,9 +2,13 @@
 #
 # Fully Urdu, single-language. All-remote pipeline so the worker stays light
 # enough for a free-tier deploy:
-#   - STT: Soniox real-time WS (soniox)         — SONIOX_API_KEY
-#   - TTS: Soniox real-time WS (soniox)         — SONIOX_API_KEY (same key)
+#   - STT: Speechmatics real-time (urdu_stt)     — SPEECHMATICS_API_KEY (free tier: 3,000 min/mo)
+#   - TTS: Azure Cognitive Services (urdu_tts)   — AZURE_SPEECH_KEY/_REGION (free tier)
 #   - LLM: Gemma 4 31B via LiveKit Inference     — LIVEKIT_API_KEY/SECRET (no extra key)
+#
+# Switched from Soniox 2026-07-09 (Soniox has no free tier and the demo
+# org's balance ran out mid-call -- see workspace CLAUDE.md). Same
+# urdu_stt/urdu_tts providers hashim-girls-hostel already uses.
 #
 # No phone number: visitors reach this agent from the landing page over WebRTC.
 # Routing pins here via SINGLE_TENANT_MODE=true + DEFAULT_TENANT_SLUG=urdu-demo
@@ -23,7 +27,7 @@ tenant:
 personality:
   system_prompt: |
     آپ ایک دوستانہ، مہذب اور ذہین اردو وائس اسسٹنٹ ہیں۔ یہ ایک لائیو ڈیمو ہے
-    جو LiveKit، Soniox اور Gemma کی مدد سے بنایا گیا ہے۔
+    جو LiveKit، Speechmatics، Azure اور Gemma کی مدد سے بنایا گیا ہے۔
 
     اہم ہدایات:
     - ہمیشہ صرف اردو میں، اردو رسمالخط (نستعلیق) میں جواب دیں — رومن اردو یا
@@ -48,14 +52,12 @@ languages:
   ask_on_start: false
 
 voice:
-  stt_provider: soniox
-  tts_provider: soniox
-  # Soniox multilingual voice; speaks whichever `language` it's given (ur).
-  # Override per-deploy with the SONIOX_TTS_VOICE env var.
-  tts_voice_id: "Maya"
+  stt_provider: urdu_stt
+  tts_provider: urdu_tts
+  tts_voice_id: "ur-PK-UzmaNeural"
   speed: 1.0
   voices:
-    ur: "Maya"
+    ur: "ur-PK-UzmaNeural"
 
 llm:
   provider: inference
