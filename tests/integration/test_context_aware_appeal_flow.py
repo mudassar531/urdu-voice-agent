@@ -71,8 +71,8 @@ async def test_summary_lands_as_content_on_submission():
     assert "full_name" in field_names
 
     # Stub _create_main_agent so the success path doesn't try to build a real
-    # TenantAgent (would need YANDEX_API_KEY / VoiceFactory wiring). Same trick
-    # used in Task 6 unit tests for confirm_and_submit.
+    # TenantAgent (would need real STT/TTS credentials / VoiceFactory wiring).
+    # Same trick used in Task 6 unit tests for confirm_and_submit.
     sub._create_main_agent = lambda: MagicMock()  # noqa: SLF001
 
     # Simulate: LLM has gathered demographics and now calls confirm_and_submit

@@ -13,7 +13,7 @@ def _config(
     slug: str = "example-tenant",
     multilingual: bool = True,
     greeting_provider: str | None = "gemini",
-    stt_provider: str = "yandex",
+    stt_provider: str = "soniox",
 ) -> TenantConfig:
     langs = (
         LanguagesConfig(default="ru", available=["ru", "uz"]) if multilingual else LanguagesConfig()

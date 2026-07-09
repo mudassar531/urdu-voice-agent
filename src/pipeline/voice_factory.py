@@ -1,6 +1,6 @@
 """
 Voice pipeline factory: creates STT, TTS, LLM, and VAD instances from TenantConfig.
-Uses navai-shared for STT/TTS (Yandex SpeechKit v3) and LLM factory for language models.
+Uses navai-shared for STT/TTS and LLM factory for language models.
 
 NOTE: LiveKit plugins must be imported at module level (main thread) because
 plugin registration raises RuntimeError if called from a worker thread.
@@ -12,28 +12,52 @@ import logging
 import os
 from typing import Any
 
-from livekit.plugins import google as _google_plugin  # Must import on main thread
-
-try:
-    from livekit.plugins import openai as _openai_plugin  # noqa: F401
-except ImportError:
-    _openai_plugin = None
-
-from livekit.plugins import silero
-
 from config.schema import TenantConfig
 from observability.network_topology import register_service_route
 
 logger = logging.getLogger(__name__)
 
+
+# _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment (see
+# main.py for why this checks both RUN_TOKEN_SERVER and LOW_MEMORY_MODE --
+# they're independent signals: co-located-processes vs. this-process-alone-
+# is-still-512MB). Usually running only the urdu-demo tenant (llm.provider:
+# inference, voice providers: soniox) via TENANT_ALLOWLIST. None of the
+# plugins below are used by that tenant, but merely IMPORTING a
+# livekit.plugins.* module triggers its registration (and, for silero,
+# onnxruntime init) regardless of whether it's ever called -- skip importing
+# them there to cut baseline RAM. A tenant that actually needs one of these
+# providers in that mode fails loudly (see the matching _create_*/load_vad
+# functions) instead of silently misrouting.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) or os.getenv("LOW_MEMORY_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
+if not _WEB_DEMO_MODE:
+    from livekit.plugins import google as _google_plugin  # Must import on main thread
+    from livekit.plugins import silero
+else:
+    _google_plugin = None  # type: ignore[assignment]
+    silero = None  # type: ignore[assignment]
+
+if not _WEB_DEMO_MODE:
+    try:
+        from livekit.plugins import openai as _openai_plugin  # noqa: F401
+    except ImportError:
+        _openai_plugin = None
+else:
+    _openai_plugin = None
+
 # Language code mapping
 _LANG_MAP = {
-    "uz": "uz-UZ",
     "ru": "ru-RU",
     "en": "en-US",
     "kk": "kk-KK",
     # Urdu (Pakistan). REQUIRED for an Urdu tenant — without this entry,
-    # language="ur" falls back to uz-UZ for both STT and TTS locale.
+    # language="ur" falls back to ur-PK below anyway, but keep it explicit.
     "ur": "ur-PK",
 }
 
@@ -56,28 +80,12 @@ class VoiceFactory:
         provider = config.voice.stt_provider_for(language).lower()
         locale = _LANG_MAP.get(language)
         if locale is None:
-            logger.warning(f"Unknown language code {language!r}, falling back to uz-UZ")
-            locale = "uz-UZ"
-
-        if provider == "custom" and os.getenv("DISABLE_CUSTOM_STT", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            logger.warning(
-                "DISABLE_CUSTOM_STT is set; routing tenant 'custom' STT to 'yandex' "
-                "instead. Unset the env var once the custom STT host is healthy."
-            )
-            provider = "yandex"
+            logger.warning(f"Unknown language code {language!r}, falling back to ur-PK")
+            locale = "ur-PK"
 
         logger.info(f"Creating STT: provider={provider}, language={locale}")
 
-        if provider == "yandex":
-            from pipeline.providers.yandex_stt import YandexSTT
-
-            return YandexSTT(language=locale)
-        elif provider == "navai":
+        if provider == "navai":
             from pipeline.providers.navai_stt import NavaiSTT
 
             return NavaiSTT(language=locale.split("-")[0])
@@ -93,13 +101,34 @@ class VoiceFactory:
             # for endpointing (falls back to a default Silero VAD if none passed).
             return NavaiWSSTT(language=locale.split("-")[0], vad=vad)
         elif provider == "urdu_stt":
-            # TODO(urdu): plug your Urdu STT engine here.
-            # UrduSTT is a STUB — see src/pipeline/providers/urdu_stt.py and the
-            # README "Urdu integration seams" section. It currently raises
-            # NotImplementedError until a real engine is wired.
+            # Real implementation (Speechmatics) -- see
+            # src/pipeline/providers/urdu_stt.py. NOTE: importing this module
+            # alone (pulling in livekit-plugins-speechmatics) costs ~120-150MB
+            # RSS -- confirmed via temporary memcheck instrumentation to be
+            # what OOMs the 512MB web-demo instance (job process baseline is
+            # already ~300MB before this import). Fine on a 2GB+ instance.
             from pipeline.providers.urdu_stt import UrduSTT
 
             return UrduSTT(language=locale, vad=vad)
+        elif provider == "azure_stt":
+            # Same Urdu STT job as urdu_stt, backed by Azure instead of
+            # Speechmatics -- see src/pipeline/providers/azure_stt.py. NOTE:
+            # fits comfortably in the 512MB web-demo instance's RAM
+            # (confirmed ~310MB total, well under the ceiling that killed
+            # urdu_stt/Speechmatics) but the Azure Speech SDK's
+            # blocking/synchronous work starves the free tier's 0.1 vCPU
+            # badly enough that Render's own health check times out and
+            # restarts the container mid-call -- reached "Agent active" but
+            # never survived long enough to respond, twice. Fine on a
+            # instance with more CPU (Starter+); not a memory problem.
+            from pipeline.providers.azure_stt import AzureUrduSTT
+
+            return AzureUrduSTT(language=locale, vad=vad)
+        elif provider == "soniox":
+            # Unified Urdu STT via Soniox streaming WS (livekit-plugins-soniox).
+            from pipeline.providers.soniox_stt import SonioxSTT
+
+            return SonioxSTT(language=locale, vad=vad)
         else:
             from livekit.agents import inference
 
@@ -151,19 +180,15 @@ class VoiceFactory:
         speed = config.voice.speed
         locale = _LANG_MAP.get(language)
         if locale is None:
-            logger.warning(f"Unknown language code {language!r}, falling back to uz-UZ")
-            locale = "uz-UZ"
+            logger.warning(f"Unknown language code {language!r}, falling back to ur-PK")
+            locale = "ur-PK"
 
         logger.info(
             f"Creating TTS: provider={provider}, voice={voice_id}, "
             f"speed={speed}, language={locale}"
         )
 
-        if provider == "yandex":
-            from pipeline.providers.yandex_tts import YandexTTS
-
-            return YandexTTS(voice=voice_id, speed=speed, language=locale)
-        elif provider == "navai":
+        if provider == "navai":
             from pipeline.providers.navai_tts import NavaiTTS
 
             return NavaiTTS(voice=voice_id, speed=speed)
@@ -171,9 +196,9 @@ class VoiceFactory:
             from config.schema import VoiceConfig
             from pipeline.providers.navai_ws_tts import NavaiWSTTS
 
-            # The global tts_voice_id defaults to a Yandex voice ("yulduz") that does
-            # not exist on the NavAI WS server. Honor an explicit per-language voice
-            # or a deliberately-set tts_voice_id; otherwise pass empty so the provider
+            # The global tts_voice_id may default to a voice that doesn't exist on
+            # the NavAI WS server. Honor an explicit per-language voice or a
+            # deliberately-set tts_voice_id; otherwise pass empty so the provider
             # defaults to its NavAI voice ("navai"). This lets a tenant flip
             # tts_provider -> navai_ws without also remembering to set a voice.
             default_voice_id = VoiceConfig.model_fields["tts_voice_id"].default
@@ -186,13 +211,20 @@ class VoiceFactory:
 
             return CustomTTS(voice=voice_id, speed=speed)
         elif provider == "urdu_tts":
-            # TODO(urdu): plug your Urdu TTS engine here.
-            # UrduTTS is a STUB — see src/pipeline/providers/urdu_tts.py and the
-            # README "Urdu integration seams" section. It currently raises
-            # NotImplementedError until a real engine is wired.
+            # Real implementation (Azure Cognitive Services) -- see
+            # src/pipeline/providers/urdu_tts.py. Fits the 512MB web-demo
+            # instance's RAM fine when paired with azure_stt (not
+            # Speechmatics) -- see the azure_stt branch above for why that
+            # pairing still doesn't survive on the free tier (CPU, not
+            # memory).
             from pipeline.providers.urdu_tts import UrduTTS
 
             return UrduTTS(voice=voice_id, speed=speed, language=locale)
+        elif provider == "soniox":
+            # Unified Urdu TTS via Soniox streaming WS (livekit-plugins-soniox).
+            from pipeline.providers.soniox_tts import SonioxTTS
+
+            return SonioxTTS(voice=voice_id, speed=speed, language=locale)
         else:
             from livekit.agents import inference
 
@@ -216,6 +248,8 @@ class VoiceFactory:
             return _create_gemini_llm(config)
         elif provider in ("gemini_api", "google_ai_studio"):
             return _create_gemini_api_llm(config)
+        elif provider in ("inference", "livekit", "gemma"):
+            return _create_inference_llm(config)
         elif provider == "openai":
             return _create_openai_llm(config)
         elif provider == "lexantei":
@@ -229,6 +263,12 @@ class VoiceFactory:
     @staticmethod
     def load_vad(config: TenantConfig) -> silero.VAD:
         """Load Silero VAD with config-driven thresholds."""
+        if silero is None:
+            raise RuntimeError(
+                "Silero VAD is skipped in web-demo mode (RUN_TOKEN_SERVER=1) to save "
+                "memory; AgentSession's bundled default VAD is used instead (vad=None). "
+                "This tenant should not be reaching load_vad() in that mode."
+            )
         logger.info(
             f"Loading VAD: silence={config.vad.min_silence_duration}s, "
             f"threshold={config.vad.activation_threshold}"
@@ -244,6 +284,13 @@ class VoiceFactory:
 
 def _create_gemini_llm(config: TenantConfig) -> Any:
     """Create Google Gemini LLM instance via Vertex AI (ADC from attached SA)."""
+    if _google_plugin is None:
+        raise RuntimeError(
+            "llm.provider 'gemini' needs the Google plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     from utils.vertex_region import PROJECT, resolve_location, vertex_endpoint
 
     location = resolve_location(config.llm.model)
@@ -274,6 +321,13 @@ def _create_gemini_api_llm(config: TenantConfig) -> Any:
     agent can run without a GCP service account / project. Set the tenant's
     ``llm.provider`` to ``gemini_api`` to enable.
     """
+    if _google_plugin is None:
+        raise RuntimeError(
+            "llm.provider 'gemini_api' needs the Google plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -298,8 +352,44 @@ def _create_gemini_api_llm(config: TenantConfig) -> Any:
     )
 
 
+def _create_inference_llm(config: TenantConfig) -> Any:
+    """Create an LLM served by LiveKit Inference (e.g. Gemma 4 31B).
+
+    The model string follows the ``<provider>/<model>`` convention, e.g.
+    ``google/gemma-4-31b-it`` (LiveKit's latency-optimized default) or
+    ``google/gemini-2.5-flash`` as a higher-quality fallback. No separate API
+    key is needed on our side — LiveKit Inference authenticates with the same
+    ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the worker already uses, so the
+    whole stack (STT via Soniox, LLM here) stays on credentials we already have.
+    """
+    from livekit.agents import inference
+
+    model = config.llm.model or "google/gemma-4-31b-it"
+    # Lower temperature for reliable function calling (Gemma can otherwise emit a
+    # tool call as plain text). Passed through extra_kwargs since inference.LLM
+    # takes no direct temperature argument.
+    temperature = min(config.llm.temperature, 0.3)
+
+    register_service_route(
+        "inference_llm",
+        os.getenv("LIVEKIT_URL", "livekit-inference"),
+        provider="livekit_inference",
+        metadata={"model": model, "temperature": temperature},
+        notes="LiveKit Inference LLM generation requests (e.g. Gemma 4 31B)",
+    )
+
+    return inference.LLM(model=model, extra_kwargs={"temperature": temperature})
+
+
 def _create_openai_llm(config: TenantConfig) -> Any:
     """Create OpenAI-compatible LLM instance."""
+    if _openai_plugin is None and _WEB_DEMO_MODE:
+        raise RuntimeError(
+            "llm.provider 'openai' needs the OpenAI plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     from livekit.plugins import openai
 
     base_url = os.getenv("OPENAI_BASE_URL")

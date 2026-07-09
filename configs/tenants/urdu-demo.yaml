@@ -1,0 +1,108 @@
+# Urdu Voice Demo — the public web demo tenant.
+#
+# Fully Urdu, single-language. All-remote pipeline so the worker stays light
+# enough for a free-tier deploy:
+#   - STT: Soniox real-time WS (soniox)         — SONIOX_API_KEY
+#   - TTS: Soniox real-time WS (soniox)         — SONIOX_API_KEY (same key)
+#   - LLM: Gemma 4 31B via LiveKit Inference     — LIVEKIT_API_KEY/SECRET (no extra key)
+#
+# Two free alternatives tried and ruled out on 2026-07-09 after Soniox's org
+# balance ran out (see workspace CLAUDE.md "Render deployment" for the full
+# investigation):
+#   - urdu_stt (Speechmatics) + urdu_tts (Azure): OOMs the 512MB instance --
+#     importing livekit-plugins-speechmatics alone costs ~120-150MB against
+#     an already ~300MB job baseline.
+#   - azure_stt + urdu_tts (Azure for both, no Speechmatics): fits in memory
+#     fine (~310MB total, confirmed via instrumentation) but the Azure Speech
+#     SDK's blocking/synchronous work starves the free tier's 0.1 vCPU badly
+#     enough that Render's own health check times out and restarts the
+#     container mid-call -- reached "Agent active" both times, never
+#     survived long enough to respond. No configurable health-check
+#     timeout/grace period exists on Render to work around this.
+# Soniox's lightweight async WS client is the only STT/TTS pairing proven to
+# survive the free tier's memory AND CPU limits together.
+#
+# No phone number: visitors reach this agent from the landing page over WebRTC.
+# Routing pins here via SINGLE_TENANT_MODE=true + DEFAULT_TENANT_SLUG=urdu-demo
+# (see src/config/routing.py and loader.get_default).
+#
+# To A/B the LLM without touching code, change llm.model to
+# "google/gemini-2.5-flash" (still provider: inference, still no extra key), or
+# switch llm.provider to "gemini_api" + set GOOGLE_API_KEY.
+
+tenant:
+  id: "000000000000000000000020"
+  slug: "urdu-demo"
+  name: "Urdu Voice Demo"
+  phone_numbers: []
+
+personality:
+  system_prompt: |
+    آپ ایک دوستانہ، مہذب اور ذہین اردو وائس اسسٹنٹ ہیں۔ یہ ایک لائیو ڈیمو ہے
+    جو LiveKit، Soniox اور Gemma کی مدد سے بنایا گیا ہے۔
+
+    اہم ہدایات:
+    - ہمیشہ صرف اردو میں، اردو رسمالخط (نستعلیق) میں جواب دیں — رومن اردو یا
+      انگریزی میں ہرگز نہیں، کیونکہ آواز کا انجن صرف اردو رسمالخط کو درست ادا
+      کرتا ہے۔
+    - جواب مختصر، قدرتی اور بات چیت جیسے رکھیں، جیسے فون پر کوئی انسان بات کر
+      رہا ہو۔ ایک وقت میں ایک ہی نکتہ یا سوال۔
+    - گرمجوشی سے پیش آئیں؛ صارف کا نام پوچھ سکتے ہیں اور اُن کی بات میں دلچسپی
+      ظاہر کریں۔
+    - اگر موجودہ وقت پوچھا جائے تو get_current_time ٹول استعمال کریں۔
+    - اگر کوئی بات آپ کے دائرہکار سے باہر ہو تو دیانتداری سے بتا دیں۔
+    - جب صارف بات ختم کرنا چاہے یا خدا حافظ کہے تو مہذب انداز میں end_call ٹول
+      کے ذریعے کال ختم کریں۔
+  greeting: "السلام علیکم! میں آپ کا اردو وائس اسسٹنٹ ہوں۔ آپ مجھ سے کسی بھی موضوع پر بات کر سکتے ہیں۔ بتائیے، میں آپ کی کیا مدد کر سکتا ہوں؟"
+  greeting_allow_interruptions: true
+  fallback: "معاف کیجیے، میں یہ بات ٹھیک سے سمجھ نہیں سکا۔ کیا آپ دوبارہ بتائیں گے؟"
+  goodbye: "آپ سے بات کر کے خوشی ہوئی۔ اللہ حافظ!"
+
+languages:
+  default: "ur"
+  available: ["ur"]
+  ask_on_start: false
+
+voice:
+  stt_provider: soniox
+  tts_provider: soniox
+  # Soniox multilingual voice; speaks whichever `language` it's given (ur).
+  # Override per-deploy with the SONIOX_TTS_VOICE env var.
+  tts_voice_id: "Maya"
+  speed: 1.0
+  voices:
+    ur: "Maya"
+
+llm:
+  provider: inference
+  model: google/gemma-4-31b-it
+  temperature: 0.2
+
+behavior:
+  language: ur
+  max_call_duration_seconds: 600
+  allow_interruptions: true
+
+knowledge_base:
+  enabled: false
+
+transfer:
+  enabled: false
+
+tools:
+  platform:
+    - get_current_time
+    - end_call
+  tenant: []
+
+responses:
+  silence_prompt: "کیا آپ ابھی بھی لائن پر ہیں؟ براہ کرم بتائیے۔"
+  silence_goodbye: "لگتا ہے رابطہ منقطع ہو گیا۔ اللہ حافظ!"
+  fallback: "معاف کیجیے، اس بات کا جواب میرے پاس نہیں ہے۔"
+  goodbye: "اللہ حافظ!"
+  tool_wait: "ایک لمحہ..."
+
+silence:
+  prompt_timeout: 20.0
+  goodbye_timeout: 40.0
+  monitor_interval: 2.0

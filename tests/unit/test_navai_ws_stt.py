@@ -355,7 +355,7 @@ def _factory_stt(voice_block: dict, vad=None):
     config = TenantConfig.model_validate(
         {"tenant": {"id": "t", "slug": "t", "name": "T"}, "voice": voice_block}
     )
-    return VoiceFactory.create_stt_for_language(config, "uz", vad=vad)
+    return VoiceFactory.create_stt_for_language(config, "ru", vad=vad)
 
 
 def test_factory_returns_navai_ws_stt_and_threads_vad():
@@ -363,4 +363,4 @@ def test_factory_returns_navai_ws_stt_and_threads_vad():
     s = _factory_stt({"stt_provider": "navai_ws"}, vad=sentinel)
     assert isinstance(s, NavaiWSSTT)
     assert s._vad is sentinel
-    assert s._language == "uz"
+    assert s._language == "ru"

@@ -12,7 +12,6 @@ import os
 
 from dotenv import load_dotenv
 from livekit.agents import AgentServer, JobContext, JobProcess, RoomInputOptions, cli
-from livekit.plugins import noise_cancellation, silero
 
 from agents.factory import AgentFactory, set_factory
 from api.platform_client import get_platform_client
@@ -35,6 +34,30 @@ from tools.registry import get_tool_registry
 from utils.monitor_probe import is_monitor_probe
 from utils.phone import extract_called_phone, extract_caller_phone
 
+# _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment: skip
+# loading plugins/models this deployment doesn't need. Two separate signals
+# feed it because RUN_TOKEN_SERVER=1 (co-locate worker + token server in one
+# container) and LOW_MEMORY_MODE=1 (this process alone is still on a 512MB
+# instance, e.g. after splitting the worker into its own Render service) are
+# independent decisions -- deriving this from RUN_TOKEN_SERVER alone silently
+# disabled every optimization the moment the worker was split out on its own.
+# Computed here, before the plugin imports below, because merely importing
+# livekit.plugins.silero / noise_cancellation triggers livekit-agents' plugin
+# auto-registration (and onnxruntime init for silero) regardless of whether
+# load()/BVC() is ever called -- skipping the call alone doesn't skip that cost.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) or os.getenv("LOW_MEMORY_MODE", "").strip().lower() in ("1", "true", "yes", "on")
+
+if not _WEB_DEMO_MODE:
+    from livekit.plugins import noise_cancellation, silero
+else:
+    noise_cancellation = None  # type: ignore[assignment]
+    silero = None  # type: ignore[assignment]
+
 load_dotenv()
 
 logging.basicConfig(
@@ -42,6 +65,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger("voice-agent")
+
 
 install_network_observer()
 register_service_route(
@@ -72,7 +96,12 @@ set_factory(agent_factory)
 # initialize_process_timeout bumped from default 10s -> 30s to give the
 # Silero VAD download/load room to finish on first boot.
 # Override via NAVAI_NUM_IDLE_PROCESSES env var if needed.
-_NUM_IDLE = int(os.getenv("NAVAI_NUM_IDLE_PROCESSES", "5"))
+# Web-demo mode (RUN_TOKEN_SERVER=1, _WEB_DEMO_MODE computed above) co-locates
+# the worker with the token server in one small container. Prewarmed idle
+# workers each hold a full copy of the model stack and OOM a 512MB free box,
+# so force 0 there (the first call pays a ~9s cold start instead). A
+# dedicated/larger instance still prewarms normally.
+_NUM_IDLE = 0 if _WEB_DEMO_MODE else int(os.getenv("NAVAI_NUM_IDLE_PROCESSES", "5"))
 _INIT_TIMEOUT = float(os.getenv("NAVAI_INIT_PROCESS_TIMEOUT", "30"))
 server = AgentServer(
     port=8088,
@@ -86,20 +115,28 @@ def prewarm(proc: JobProcess):
 
     Loads:
       1. Silero VAD model (~0.5-2s on first boot; cached on subsequent forks).
+         Skipped in web-demo mode: `livekit-plugins-silero` pulls in a
+         separate onnxruntime session on top of AgentSession's own bundled
+         native VAD, which the 512MB container has no headroom for. `vad=None`
+         (see entrypoint()) makes AgentSession fall back to that bundled VAD.
       2. Per-tenant Qdrant KB collections (~1.3s each on first boot).
          Without this, kb_manager.warmup() runs on the first call each worker
          handles, adding ~1.3s to pickup latency. Pre-warming here moves that
          cost off the critical path so calls land on a fully ready worker.
     """
-    vad = silero.VAD.load(
-        min_silence_duration=0.8,
-        min_speech_duration=0.12,
-        activation_threshold=0.45,
-        prefix_padding_duration=0.4,
-        max_buffered_speech=60.0,
-    )
-    proc.userdata["vad"] = vad
-    logger.info("VAD loaded (balanced: 800ms silence, 0.45 threshold)")
+    if _WEB_DEMO_MODE:
+        proc.userdata["vad"] = None
+        logger.info("VAD: using AgentSession's bundled default (web-demo mode)")
+    else:
+        vad = silero.VAD.load(
+            min_silence_duration=0.8,
+            min_speech_duration=0.12,
+            activation_threshold=0.45,
+            prefix_padding_duration=0.4,
+            max_buffered_speech=60.0,
+        )
+        proc.userdata["vad"] = vad
+        logger.info("VAD loaded (balanced: 800ms silence, 0.45 threshold)")
 
     # Pre-warm KB collections for all loaded tenants in this worker process.
     # Skipped via NAVAI_PREWARM_KB=0 in case Qdrant is unreachable at boot.
@@ -237,8 +274,13 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Acquire the VAD before STT so the streaming navai_ws STT can reuse the
-    # session's prewarmed, tenant-tuned Silero VAD for endpointing.
-    vad = ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config)
+    # session's prewarmed, tenant-tuned Silero VAD for endpointing. In
+    # web-demo mode `proc.userdata["vad"]` is intentionally None (see
+    # prewarm()) -- `or VoiceFactory.load_vad(config)` would otherwise defeat
+    # that by loading Silero here instead, so check the flag explicitly.
+    vad = (
+        None if _WEB_DEMO_MODE else (ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config))
+    )
 
     if use_greeting_stt_override:
         try:
@@ -387,7 +429,11 @@ async def entrypoint(ctx: JobContext):
         # transcribing ایکس ایکس when nobody is speaking" feedback loop in
         # the LiveKit playground (no AEC in the browser by default).
         room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
+            # BVC loads a model per session (heavy on RAM/CPU). Skip it in the
+            # memory-constrained web-demo mode — the browser's WebRTC already
+            # applies echo cancellation, so the feedback loop BVC guards against
+            # isn't a problem for in-browser callers.
+            noise_cancellation=None if _WEB_DEMO_MODE else noise_cancellation.BVC(),
         ),
     )
     if hasattr(agent, "_start_silence_monitor"):

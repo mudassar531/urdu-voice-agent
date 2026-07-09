@@ -106,6 +106,41 @@ python eval/check_kb.py --ssh --host user@<your-server>   # KB retrieval health
 
 ---
 
+## Browser voice demo (Soniox + Gemma, no phone)
+
+A ready-to-deploy path where a visitor opens a landing page, enters their email,
+and talks to the Urdu agent **in the browser** over WebRTC — no telephony.
+
+- **Speech:** Soniox for **both** STT and TTS (`voice.stt_provider: soniox`,
+  `voice.tts_provider: soniox`) on a single `SONIOX_API_KEY`.
+  See `src/pipeline/providers/soniox_stt.py` / `soniox_tts.py`.
+- **LLM:** Gemma 4 31B on **LiveKit Inference** (`llm.provider: inference`,
+  `model: google/gemma-4-31b-it`) — no extra key; it authenticates with
+  `LIVEKIT_API_KEY`/`SECRET`. Swap `model` to `google/gemini-2.5-flash` for a
+  higher-quality Urdu fallback (still no key).
+- **Tenant:** `configs/tenants/urdu-demo.yaml` (Urdu-only, KB off). Pinned as the
+  default for the no-phone path via `DEFAULT_TENANT_SLUG=urdu-demo` +
+  `SINGLE_TENANT_MODE=true` + `MULTI_TENANT_STRICT_ROUTING=false`.
+- **Token/email API:** `src/webapp/token_server.py` (aiohttp) mints the browser's
+  LiveKit token with embedded agent dispatch, and records the email lead.
+- **Landing page:** `services/landing` in the `urdu-voice-platform` repo.
+
+```bash
+export SONIOX_API_KEY=...  LIVEKIT_URL=...  LIVEKIT_API_KEY=...  LIVEKIT_API_SECRET=...
+export SINGLE_TENANT_MODE=true MULTI_TENANT_STRICT_ROUTING=false DEFAULT_TENANT_SLUG=urdu-demo
+
+# token/email API (the browser talks to this)
+PYTHONPATH=src TOKEN_SERVER_PORT=8080 python -m webapp.token_server &
+# LiveKit worker (Soniox STT/TTS + Gemma)
+PYTHONPATH=src python src/main.py start
+```
+
+In Docker/Render, set `RUN_TOKEN_SERVER=1` and the entrypoint runs **both** the
+worker and the token server in one container (binds `$PORT`). One-click deploy:
+`urdu-voice-infra/render.yaml` + `urdu-voice-infra/docs/DEPLOY-RENDER.md`.
+
+---
+
 ## Onboarding a tenant
 
 1. Copy the documented skeleton:

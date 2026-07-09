@@ -269,7 +269,7 @@ def classify_failure(stage: str, error_type: str, error_message: str) -> Failure
             summary="Agent joined the probe room but did not transcribe a response in time.",
             remediation=(
                 "Inspect agent logs around the room name for STT/LLM/TTS errors.",
-                "Verify upstream services (Gemini, Yandex, Custom STT) are reachable from the agent container.",
+                "Verify upstream services (Gemini, Soniox, Custom STT) are reachable from the agent container.",
                 "If responses are merely slow, raise MONITOR_RESPONSE_TIMEOUT_SECONDS.",
             ),
         )
@@ -788,10 +788,17 @@ async def run_once(config: MonitorConfig) -> int:
     notified = False
 
     if should_notify(result, state, config):
-        # Send before update_state so the "Last successful probe" line reflects
-        # the PREVIOUS success, not the current run.
-        send_telegram(config, result, state)
-        notified = True
+        if config.telegram_bot_token:
+            # Send before update_state so the "Last successful probe" line
+            # reflects the PREVIOUS success, not the current run.
+            send_telegram(config, result, state)
+            notified = True
+        else:
+            print(
+                "monitor: notify condition met but MONITOR_TELEGRAM_BOT_TOKEN is unset "
+                "-- skipping notification",
+                file=sys.stderr,
+            )
 
     update_state(state, result, notified)
     save_state(config.state_path, state)
