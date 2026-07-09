@@ -18,18 +18,6 @@ from observability.network_topology import register_service_route
 logger = logging.getLogger(__name__)
 
 
-def _memcheck_hook(label: str) -> None:
-    """TEMPORARY diagnostic: log process RSS. Remove once azure_stt's memory
-    footprint on the 512MB web-demo instance is confirmed."""
-    try:
-        import resource
-
-        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        logger.info("[memcheck] %s: rss=%.1fMB", label, rss_kb / 1024)
-    except Exception as exc:
-        logger.warning("[memcheck] %s: failed (%s)", label, exc)
-
-
 # _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment (see
 # main.py for why this checks both RUN_TOKEN_SERVER and LOW_MEMORY_MODE --
 # they're independent signals: co-located-processes vs. this-process-alone-
@@ -124,17 +112,18 @@ class VoiceFactory:
             return UrduSTT(language=locale, vad=vad)
         elif provider == "azure_stt":
             # Same Urdu STT job as urdu_stt, backed by Azure instead of
-            # Speechmatics -- see src/pipeline/providers/azure_stt.py. Pairs
-            # with tts_provider: urdu_tts (also Azure) so a tenant pays the
-            # livekit-plugins-azure import cost once instead of stacking a
-            # second heavy STT SDK on top.
-            _memcheck_hook("before_azure_stt_import")
+            # Speechmatics -- see src/pipeline/providers/azure_stt.py. NOTE:
+            # fits comfortably in the 512MB web-demo instance's RAM
+            # (confirmed ~310MB total, well under the ceiling that killed
+            # urdu_stt/Speechmatics) but the Azure Speech SDK's
+            # blocking/synchronous work starves the free tier's 0.1 vCPU
+            # badly enough that Render's own health check times out and
+            # restarts the container mid-call -- reached "Agent active" but
+            # never survived long enough to respond, twice. Fine on a
+            # instance with more CPU (Starter+); not a memory problem.
             from pipeline.providers.azure_stt import AzureUrduSTT
 
-            _memcheck_hook("after_azure_stt_import")
-            instance = AzureUrduSTT(language=locale, vad=vad)
-            _memcheck_hook("after_azure_stt_construct")
-            return instance
+            return AzureUrduSTT(language=locale, vad=vad)
         elif provider == "soniox":
             # Unified Urdu STT via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_stt import SonioxSTT
@@ -223,14 +212,14 @@ class VoiceFactory:
             return CustomTTS(voice=voice_id, speed=speed)
         elif provider == "urdu_tts":
             # Real implementation (Azure Cognitive Services) -- see
-            # src/pipeline/providers/urdu_tts.py.
-            _memcheck_hook("before_urdu_tts_import")
+            # src/pipeline/providers/urdu_tts.py. Fits the 512MB web-demo
+            # instance's RAM fine when paired with azure_stt (not
+            # Speechmatics) -- see the azure_stt branch above for why that
+            # pairing still doesn't survive on the free tier (CPU, not
+            # memory).
             from pipeline.providers.urdu_tts import UrduTTS
 
-            _memcheck_hook("after_urdu_tts_import")
-            instance = UrduTTS(voice=voice_id, speed=speed, language=locale)
-            _memcheck_hook("after_urdu_tts_construct")
-            return instance
+            return UrduTTS(voice=voice_id, speed=speed, language=locale)
         elif provider == "soniox":
             # Unified Urdu TTS via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_tts import SonioxTTS

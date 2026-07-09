@@ -2,20 +2,25 @@
 #
 # Fully Urdu, single-language. All-remote pipeline so the worker stays light
 # enough for a free-tier deploy:
-#   - STT: Azure Cognitive Services (azure_stt) — AZURE_SPEECH_KEY/_REGION
-#   - TTS: Azure Cognitive Services (urdu_tts)  — AZURE_SPEECH_KEY/_REGION (same)
+#   - STT: Soniox real-time WS (soniox)         — SONIOX_API_KEY
+#   - TTS: Soniox real-time WS (soniox)         — SONIOX_API_KEY (same key)
 #   - LLM: Gemma 4 31B via LiveKit Inference     — LIVEKIT_API_KEY/SECRET (no extra key)
 #
-# Tried urdu_stt (Speechmatics) + urdu_tts (Azure) on 2026-07-09 after
-# Soniox's org balance ran out -- reverted. Confirmed via memory
-# instrumentation that importing livekit-plugins-speechmatics alone
-# (~120-150MB) OOMs the 512MB web-demo instance on its own, before Azure's
-# import was ever reached. Trying Azure-only (STT+TTS both azure, no
-# Speechmatics) next -- pays the livekit-plugins-azure import cost exactly
-# once instead of stacking two heavy SDKs (see azure_stt.py's docstring and
-# workspace CLAUDE.md "Render deployment" for the full investigation).
-# Falls back to soniox (proven to fit, needs a funded account) if this
-# doesn't fit either.
+# Two free alternatives tried and ruled out on 2026-07-09 after Soniox's org
+# balance ran out (see workspace CLAUDE.md "Render deployment" for the full
+# investigation):
+#   - urdu_stt (Speechmatics) + urdu_tts (Azure): OOMs the 512MB instance --
+#     importing livekit-plugins-speechmatics alone costs ~120-150MB against
+#     an already ~300MB job baseline.
+#   - azure_stt + urdu_tts (Azure for both, no Speechmatics): fits in memory
+#     fine (~310MB total, confirmed via instrumentation) but the Azure Speech
+#     SDK's blocking/synchronous work starves the free tier's 0.1 vCPU badly
+#     enough that Render's own health check times out and restarts the
+#     container mid-call -- reached "Agent active" both times, never
+#     survived long enough to respond. No configurable health-check
+#     timeout/grace period exists on Render to work around this.
+# Soniox's lightweight async WS client is the only STT/TTS pairing proven to
+# survive the free tier's memory AND CPU limits together.
 #
 # No phone number: visitors reach this agent from the landing page over WebRTC.
 # Routing pins here via SINGLE_TENANT_MODE=true + DEFAULT_TENANT_SLUG=urdu-demo
@@ -34,7 +39,7 @@ tenant:
 personality:
   system_prompt: |
     آپ ایک دوستانہ، مہذب اور ذہین اردو وائس اسسٹنٹ ہیں۔ یہ ایک لائیو ڈیمو ہے
-    جو LiveKit، Azure اور Gemma کی مدد سے بنایا گیا ہے۔
+    جو LiveKit، Soniox اور Gemma کی مدد سے بنایا گیا ہے۔
 
     اہم ہدایات:
     - ہمیشہ صرف اردو میں، اردو رسمالخط (نستعلیق) میں جواب دیں — رومن اردو یا
@@ -59,12 +64,14 @@ languages:
   ask_on_start: false
 
 voice:
-  stt_provider: azure_stt
-  tts_provider: urdu_tts
-  tts_voice_id: "ur-PK-UzmaNeural"
+  stt_provider: soniox
+  tts_provider: soniox
+  # Soniox multilingual voice; speaks whichever `language` it's given (ur).
+  # Override per-deploy with the SONIOX_TTS_VOICE env var.
+  tts_voice_id: "Maya"
   speed: 1.0
   voices:
-    ur: "ur-PK-UzmaNeural"
+    ur: "Maya"
 
 llm:
   provider: inference
