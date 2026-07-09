@@ -91,20 +91,28 @@ def prewarm(proc: JobProcess):
 
     Loads:
       1. Silero VAD model (~0.5-2s on first boot; cached on subsequent forks).
+         Skipped in web-demo mode: `livekit-plugins-silero` pulls in a
+         separate onnxruntime session on top of AgentSession's own bundled
+         native VAD, which the 512MB container has no headroom for. `vad=None`
+         (see entrypoint()) makes AgentSession fall back to that bundled VAD.
       2. Per-tenant Qdrant KB collections (~1.3s each on first boot).
          Without this, kb_manager.warmup() runs on the first call each worker
          handles, adding ~1.3s to pickup latency. Pre-warming here moves that
          cost off the critical path so calls land on a fully ready worker.
     """
-    vad = silero.VAD.load(
-        min_silence_duration=0.8,
-        min_speech_duration=0.12,
-        activation_threshold=0.45,
-        prefix_padding_duration=0.4,
-        max_buffered_speech=60.0,
-    )
-    proc.userdata["vad"] = vad
-    logger.info("VAD loaded (balanced: 800ms silence, 0.45 threshold)")
+    if _WEB_DEMO_MODE:
+        proc.userdata["vad"] = None
+        logger.info("VAD: using AgentSession's bundled default (web-demo mode)")
+    else:
+        vad = silero.VAD.load(
+            min_silence_duration=0.8,
+            min_speech_duration=0.12,
+            activation_threshold=0.45,
+            prefix_padding_duration=0.4,
+            max_buffered_speech=60.0,
+        )
+        proc.userdata["vad"] = vad
+        logger.info("VAD loaded (balanced: 800ms silence, 0.45 threshold)")
 
     # Pre-warm KB collections for all loaded tenants in this worker process.
     # Skipped via NAVAI_PREWARM_KB=0 in case Qdrant is unreachable at boot.
@@ -242,8 +250,11 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Acquire the VAD before STT so the streaming navai_ws STT can reuse the
-    # session's prewarmed, tenant-tuned Silero VAD for endpointing.
-    vad = ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config)
+    # session's prewarmed, tenant-tuned Silero VAD for endpointing. In
+    # web-demo mode `proc.userdata["vad"]` is intentionally None (see
+    # prewarm()) -- `or VoiceFactory.load_vad(config)` would otherwise defeat
+    # that by loading Silero here instead, so check the flag explicitly.
+    vad = None if _WEB_DEMO_MODE else (ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config))
 
     if use_greeting_stt_override:
         try:
