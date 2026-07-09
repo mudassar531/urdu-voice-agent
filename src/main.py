@@ -72,7 +72,12 @@ set_factory(agent_factory)
 # initialize_process_timeout bumped from default 10s -> 30s to give the
 # Silero VAD download/load room to finish on first boot.
 # Override via NAVAI_NUM_IDLE_PROCESSES env var if needed.
-_NUM_IDLE = int(os.getenv("NAVAI_NUM_IDLE_PROCESSES", "5"))
+# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token server
+# in one small container. Prewarmed idle workers each hold a full copy of the
+# model stack and OOM a 512MB free box, so force 0 there (the first call pays a
+# ~9s cold start instead). A dedicated/larger instance still prewarms normally.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+_NUM_IDLE = 0 if _WEB_DEMO_MODE else int(os.getenv("NAVAI_NUM_IDLE_PROCESSES", "5"))
 _INIT_TIMEOUT = float(os.getenv("NAVAI_INIT_PROCESS_TIMEOUT", "30"))
 server = AgentServer(
     port=8088,
@@ -387,7 +392,11 @@ async def entrypoint(ctx: JobContext):
         # transcribing ایکس ایکس when nobody is speaking" feedback loop in
         # the LiveKit playground (no AEC in the browser by default).
         room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
+            # BVC loads a model per session (heavy on RAM/CPU). Skip it in the
+            # memory-constrained web-demo mode — the browser's WebRTC already
+            # applies echo cancellation, so the feedback loop BVC guards against
+            # isn't a problem for in-browser callers.
+            noise_cancellation=None if _WEB_DEMO_MODE else noise_cancellation.BVC(),
         ),
     )
     if hasattr(agent, "_start_silence_monitor"):
