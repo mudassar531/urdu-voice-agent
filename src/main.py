@@ -254,7 +254,9 @@ async def entrypoint(ctx: JobContext):
     # web-demo mode `proc.userdata["vad"]` is intentionally None (see
     # prewarm()) -- `or VoiceFactory.load_vad(config)` would otherwise defeat
     # that by loading Silero here instead, so check the flag explicitly.
-    vad = None if _WEB_DEMO_MODE else (ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config))
+    vad = (
+        None if _WEB_DEMO_MODE else (ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config))
+    )
 
     if use_greeting_stt_override:
         try:

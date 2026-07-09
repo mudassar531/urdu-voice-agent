@@ -269,7 +269,7 @@ def classify_failure(stage: str, error_type: str, error_message: str) -> Failure
             summary="Agent joined the probe room but did not transcribe a response in time.",
             remediation=(
                 "Inspect agent logs around the room name for STT/LLM/TTS errors.",
-                "Verify upstream services (Gemini, Yandex, Custom STT) are reachable from the agent container.",
+                "Verify upstream services (Gemini, Soniox, Custom STT) are reachable from the agent container.",
                 "If responses are merely slow, raise MONITOR_RESPONSE_TIMEOUT_SECONDS.",
             ),
         )

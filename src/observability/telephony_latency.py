@@ -245,7 +245,7 @@ class TelephonyLatencyTracker:
             t = self.tenant or "unknown"
             pm.navai_turn_e2e_latency_seconds.labels(tenant=t).observe(e2e_ms / 1000)
             if stt_ms > 0:
-                pm.navai_stt_latency_seconds.labels(tenant=t, provider="yandex").observe(
+                pm.navai_stt_latency_seconds.labels(tenant=t, provider="soniox").observe(
                     stt_ms / 1000
                 )
             if llm_ms > 0:
@@ -253,7 +253,7 @@ class TelephonyLatencyTracker:
                     llm_ms / 1000
                 )
             if tts_ms > 0:
-                pm.navai_tts_latency_seconds.labels(tenant=t, provider="yandex").observe(
+                pm.navai_tts_latency_seconds.labels(tenant=t, provider="soniox").observe(
                     tts_ms / 1000
                 )
             if transport_ms > 0:

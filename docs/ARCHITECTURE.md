@@ -31,8 +31,8 @@ The agent never speaks SIP; Asterisk never speaks to the LLM; LiveKit is the bri
 ```
                                     ┌──────────────────────────────────────────────────────┐
    PSTN caller                     │                EXTERNAL MODEL PROVIDERS                │
-   dials a DID                     │  STT: navai_ws (WS) / yandex / custom-GPU / deepgram   │
-        │                          │  TTS: navai_ws (WS) / yandex / custom-GPU / cartesia   │
+   dials a DID                     │  STT: navai_ws (WS) / soniox / custom-GPU / deepgram   │
+        │                          │  TTS: navai_ws (WS) / soniox / custom-GPU / cartesia   │
         ▼                          │  LLM: Gemini (Vertex ADC, no key) / openai / vLLM      │
  ┌──────────────┐                  │  Embeddings: gemini-embedding-001 (Vertex, 768-dim)    │
  │ Carrier /    │                  └───────────────▲───────────────────────▲───────────────┘
@@ -98,7 +98,7 @@ into `Agent.__init__` so a mid-call language handoff rebinds the right component
 methods (`create_stt_for_language`, `create_tts_for_language`, `create_llm`) plus a `_LANG_MAP`
 locale table. Providers subclass `livekit.agents.stt.STT` / `tts.TTS` and live in
 `src/pipeline/providers/`. Current default stack: `navai_ws` STT (WS streaming) → `gemini` LLM
-(Vertex ADC) → `navai_ws` TTS, Silero VAD. (CLAUDE.md's "Yandex" default is stale.) This file is the
+(Vertex ADC) → `navai_ws` TTS, Silero VAD. This file is the
 primary Urdu integration seam (see `BLUEPRINT-PLAN.md`).
 
 ### 2.2 Multi-tenancy & configuration (doc 02)
@@ -153,13 +153,12 @@ loop-break after 2 unconfirmed requests. Two fire modes:
 
 Observability: stdlib server on `:8082` (`/health`, `/metrics`, `/network/*`); Prometheus `navai_*`
 families (tenant-labeled) bridged cross-process via JSON-file persistence (not the prometheus_client
-multiproc collector — bridge hardcodes yandex/gemini/yandex labels). Network observer monkey-patches
+multiproc collector — bridge hardcodes soniox/gemini/soniox labels). Network observer monkey-patches
 aiohttp/httpx; Langfuse/OTel env-gated.
 
-Resilience is narrow: **no circuit breakers / backoff**. Only failovers are the manual
-`DISABLE_CUSTOM_STT` kill-switch (custom STT → Yandex at factory time), per-turn graceful degradation
-(empty transcript / partial audio, WS `*_MAX_SECONDS` ceilings, ChunkedStream retries gated to
-zero-audio-only), and the fully-wired silence monitor. No mid-call vendor failover.
+Resilience is narrow: **no circuit breakers / backoff**. Only failovers are per-turn graceful
+degradation (empty transcript / partial audio, WS `*_MAX_SECONDS` ceilings, ChunkedStream retries
+gated to zero-audio-only), and the fully-wired silence monitor. No mid-call vendor failover.
 
 The agent serves no inbound control API — `src/api/` is the **outbound** `PlatformClient` (10s
 timeout, fail-fast validation, every method exception-safe). Deploy: Dockerfile (`python:3.11-slim`,
@@ -284,8 +283,8 @@ prod/dev entries + `api_keys.py` (code) + LiveKit dispatch/trunk + Asterisk trun
 |----------|-----------|--------------|
 | **RTC bridge** | LiveKit Cloud | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_OPERATOR_TOKEN_TTL_SECONDS` |
 | **Agent identity/routing** | — | `AGENT_NAME`, `AGENT_PHONE_NUMBER`, `MULTI_TENANT_STRICT_ROUTING`, `SINGLE_TENANT_MODE`, `CONFIG_ENV`, `NAVAI_NUM_IDLE_PROCESSES` |
-| **STT** | navai_ws / yandex / custom-GPU | `NAVAI_WS_STT_URL`, `NAVAI_API_KEY`, `NAVAI_WS_STT_MAX_SECONDS`; `YANDEX_API_KEY`/`YANDEX_IAM_TOKEN`/`YANDEX_FOLDER_ID`; `CUSTOM_STT_URL`, `DISABLE_CUSTOM_STT`; `NAVAI_STT_URL`, `OPERATOR_STT_URL` |
-| **TTS** | navai_ws / yandex / custom-GPU | `NAVAI_WS_TTS_URL`, `NAVAI_WS_VOICE_ID`, `NAVAI_WS_TTS_MAX_SECONDS`; `YANDEX_VOICE_ID`; `CUSTOM_TTS_URL`, `CUSTOM_VOICE_ID`; `NAVAI_TTS_URL`, `NAVAI_VOICE_ID` |
+| **STT** | navai_ws / soniox / custom-GPU | `NAVAI_WS_STT_URL`, `NAVAI_API_KEY`, `NAVAI_WS_STT_MAX_SECONDS`; `SONIOX_API_KEY`; `CUSTOM_STT_URL`; `NAVAI_STT_URL`, `OPERATOR_STT_URL` |
+| **TTS** | navai_ws / soniox / custom-GPU | `NAVAI_WS_TTS_URL`, `NAVAI_WS_VOICE_ID`, `NAVAI_WS_TTS_MAX_SECONDS`; `SONIOX_API_KEY`; `CUSTOM_TTS_URL`, `CUSTOM_VOICE_ID`; `NAVAI_TTS_URL`, `NAVAI_VOICE_ID` |
 | **LLM** | Gemini (Vertex ADC) / openai / vLLM | (Gemini: ADC, no key, `GOOGLE_CLOUD_PROJECT`/`_LOCATION`); `OPENAI_API_KEY`, `OPENAI_BASE_URL`; `CUSTOM_LLM_URL`, `CUSTOM_LLM_MODEL`, `CUSTOM_LLM_API_KEY`; `LEXANTEI_*` |
 | **Embeddings/RAG** | Gemini + Qdrant | `QDRANT_URL`, `QDRANT_COLLECTION`, `GEMINI_EMBEDDING_MODEL`, `RAG_HIGH/MEDIUM_CONFIDENCE`, `NAVAI_POPULATE_KB`/`POP_*` |
 | **Platform DB** | MongoDB, Redis | `MONGODB_URI`, `MONGO_USER`, `MONGO_PASSWORD`; `REDIS_PASSWORD`, `REDIS_URL` |

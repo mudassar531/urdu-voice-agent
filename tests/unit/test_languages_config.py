@@ -38,9 +38,9 @@ def test_voice_config_greeting_stt_defaults():
 def test_voice_config_stt_provider_for_uses_per_language_override():
     voice = VoiceConfig(
         stt_provider="custom",
-        stt_providers={"ru": "yandex"},
+        stt_providers={"ru": "soniox"},
     )
-    assert voice.stt_provider_for("ru") == "yandex"
+    assert voice.stt_provider_for("ru") == "soniox"
     assert voice.stt_provider_for("uz") == "custom"
 
 

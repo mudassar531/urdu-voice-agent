@@ -343,8 +343,8 @@ def test_factory_returns_navai_ws_provider():
 
 def test_factory_navai_ws_defaults_to_empty_when_voice_unset():
     # A tenant that flips tts_provider -> navai_ws WITHOUT setting tts_voice_id must
-    # NOT send the Yandex schema default ("yulduz") to the WS server. The provider
-    # default voice id is now empty (genericized) — the server applies its own
+    # NOT send a stale schema default voice id to the WS server. The provider
+    # default voice id is empty (genericized) — the server applies its own
     # default voice when an empty voice id is sent.
     tts = _factory_tts({"tts_provider": "navai_ws"})
     assert isinstance(tts, NavaiWSTTS)

@@ -326,7 +326,7 @@ def _bridge_telephony_data() -> None:
                         turn["measured_e2e_ms"] / 1000
                     )
                 if turn.get("stt_ms", 0) > 0:
-                    navai_stt_latency_seconds.labels(tenant=tenant, provider="yandex").observe(
+                    navai_stt_latency_seconds.labels(tenant=tenant, provider="soniox").observe(
                         turn["stt_ms"] / 1000
                     )
                 if turn.get("llm_ms", 0) > 0:
@@ -334,7 +334,7 @@ def _bridge_telephony_data() -> None:
                         turn["llm_ms"] / 1000
                     )
                 if turn.get("tts_ms", 0) > 0:
-                    navai_tts_latency_seconds.labels(tenant=tenant, provider="yandex").observe(
+                    navai_tts_latency_seconds.labels(tenant=tenant, provider="soniox").observe(
                         turn["tts_ms"] / 1000
                     )
                 if turn.get("transport_overhead_ms", 0) > 0:

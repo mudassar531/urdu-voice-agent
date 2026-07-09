@@ -1,6 +1,6 @@
 """
 Voice pipeline factory: creates STT, TTS, LLM, and VAD instances from TenantConfig.
-Uses navai-shared for STT/TTS (Yandex SpeechKit v3) and LLM factory for language models.
+Uses navai-shared for STT/TTS and LLM factory for language models.
 
 NOTE: LiveKit plugins must be imported at module level (main thread) because
 plugin registration raises RuntimeError if called from a worker thread.
@@ -11,6 +11,13 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+
+from livekit.plugins import silero
+
+from config.schema import TenantConfig
+from observability.network_topology import register_service_route
+
+logger = logging.getLogger(__name__)
 
 # Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
 # server in one small (512MB) container, usually running only the urdu-demo
@@ -32,21 +39,13 @@ try:
 except ImportError:
     _openai_plugin = None
 
-from livekit.plugins import silero
-
-from config.schema import TenantConfig
-from observability.network_topology import register_service_route
-
-logger = logging.getLogger(__name__)
-
 # Language code mapping
 _LANG_MAP = {
-    "uz": "uz-UZ",
     "ru": "ru-RU",
     "en": "en-US",
     "kk": "kk-KK",
     # Urdu (Pakistan). REQUIRED for an Urdu tenant — without this entry,
-    # language="ur" falls back to uz-UZ for both STT and TTS locale.
+    # language="ur" falls back to ur-PK below anyway, but keep it explicit.
     "ur": "ur-PK",
 }
 
@@ -69,28 +68,12 @@ class VoiceFactory:
         provider = config.voice.stt_provider_for(language).lower()
         locale = _LANG_MAP.get(language)
         if locale is None:
-            logger.warning(f"Unknown language code {language!r}, falling back to uz-UZ")
-            locale = "uz-UZ"
-
-        if provider == "custom" and os.getenv("DISABLE_CUSTOM_STT", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            logger.warning(
-                "DISABLE_CUSTOM_STT is set; routing tenant 'custom' STT to 'yandex' "
-                "instead. Unset the env var once the custom STT host is healthy."
-            )
-            provider = "yandex"
+            logger.warning(f"Unknown language code {language!r}, falling back to ur-PK")
+            locale = "ur-PK"
 
         logger.info(f"Creating STT: provider={provider}, language={locale}")
 
-        if provider == "yandex":
-            from pipeline.providers.yandex_stt import YandexSTT
-
-            return YandexSTT(language=locale)
-        elif provider == "navai":
+        if provider == "navai":
             from pipeline.providers.navai_stt import NavaiSTT
 
             return NavaiSTT(language=locale.split("-")[0])
@@ -169,19 +152,15 @@ class VoiceFactory:
         speed = config.voice.speed
         locale = _LANG_MAP.get(language)
         if locale is None:
-            logger.warning(f"Unknown language code {language!r}, falling back to uz-UZ")
-            locale = "uz-UZ"
+            logger.warning(f"Unknown language code {language!r}, falling back to ur-PK")
+            locale = "ur-PK"
 
         logger.info(
             f"Creating TTS: provider={provider}, voice={voice_id}, "
             f"speed={speed}, language={locale}"
         )
 
-        if provider == "yandex":
-            from pipeline.providers.yandex_tts import YandexTTS
-
-            return YandexTTS(voice=voice_id, speed=speed, language=locale)
-        elif provider == "navai":
+        if provider == "navai":
             from pipeline.providers.navai_tts import NavaiTTS
 
             return NavaiTTS(voice=voice_id, speed=speed)
@@ -189,9 +168,9 @@ class VoiceFactory:
             from config.schema import VoiceConfig
             from pipeline.providers.navai_ws_tts import NavaiWSTTS
 
-            # The global tts_voice_id defaults to a Yandex voice ("yulduz") that does
-            # not exist on the NavAI WS server. Honor an explicit per-language voice
-            # or a deliberately-set tts_voice_id; otherwise pass empty so the provider
+            # The global tts_voice_id may default to a voice that doesn't exist on
+            # the NavAI WS server. Honor an explicit per-language voice or a
+            # deliberately-set tts_voice_id; otherwise pass empty so the provider
             # defaults to its NavAI voice ("navai"). This lets a tenant flip
             # tts_provider -> navai_ws without also remembering to set a voice.
             default_voice_id = VoiceConfig.model_fields["tts_voice_id"].default

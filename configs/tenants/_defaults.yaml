@@ -10,7 +10,7 @@ voice:
   #
   # Available STT provider keys:
   #   inference  -> LiveKit inference gateway (deepgram/nova-3) — managed default
-  #   yandex     -> Yandex SpeechKit (providers/yandex_stt.py)
+  #   soniox     -> Soniox real-time WS (RECOMMENDED for Urdu; env SONIOX_API_KEY)
   #   navai      -> HTTP batch GPU server (providers/navai_stt.py; env NAVAI_STT_URL)
   #   custom     -> HTTP batch GPU server (providers/custom_stt.py; env CUSTOM_STT_URL)
   #   navai_ws   -> WebSocket streaming STT (providers/navai_ws_stt.py; env NAVAI_WS_STT_URL)
@@ -18,7 +18,7 @@ voice:
   #
   # Available TTS provider keys:
   #   inference  -> LiveKit inference gateway (cartesia/sonic-2) — managed default
-  #   yandex     -> Yandex SpeechKit v3 (providers/yandex_tts.py)
+  #   soniox     -> Soniox real-time WS (RECOMMENDED for Urdu; env SONIOX_API_KEY)
   #   navai      -> HTTP GPU server (providers/navai_tts.py; env NAVAI_TTS_URL)
   #   custom     -> HTTP GPU server (providers/custom_tts.py; env CUSTOM_TTS_URL)
   #   navai_ws   -> WebSocket streaming TTS (providers/navai_ws_tts.py; env NAVAI_WS_TTS_URL)

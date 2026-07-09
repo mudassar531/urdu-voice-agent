@@ -70,16 +70,16 @@ class PersonalityConfig(BaseModel):
 
 
 class VoiceConfig(BaseModel):
-    stt_provider: str = "yandex"
+    stt_provider: str = "inference"
     # Per-language STT provider overrides, used when languages.available > 1.
-    # Example: {"ru": "yandex", "uz": "custom"}.
+    # Example: {"ru": "navai", "en": "custom"}.
     stt_providers: dict[str, str] = Field(default_factory=dict)
     # Optional STT override used only for the first post-greeting language-choice turn.
     greeting_stt_provider: str | None = None
-    # Allowed language codes for greeting-phase STT detection (e.g. ["ru", "uz"]).
+    # Allowed language codes for greeting-phase STT detection (e.g. ["ru", "en"]).
     greeting_stt_languages: list[str] = Field(default_factory=list)
-    tts_provider: str = "yandex"
-    tts_voice_id: str = "yulduz"
+    tts_provider: str = "inference"
+    tts_voice_id: str = ""
     speed: float = 1.0
     pitch: float = 1.0
     # Per-language voice_id overrides, used when languages.available > 1.
