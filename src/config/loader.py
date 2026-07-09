@@ -334,8 +334,19 @@ class ConfigLoader:
         return self._configs_by_slug.get(slug)
 
     def get_default(self) -> TenantConfig:
-        """Return a default config (first loaded tenant or bare defaults)."""
+        """Return a default config.
+
+        Resolution order:
+          1. The tenant named by ``DEFAULT_TENANT_SLUG`` (slug or id), if loaded.
+             This is how the web demo (no called phone → single-tenant routing)
+             pins itself to the ``urdu-demo`` tenant regardless of file ordering.
+          2. The first loaded tenant.
+          3. Bare defaults when no tenant YAMLs are present.
+        """
         if self._configs_by_slug:
+            preferred = os.getenv("DEFAULT_TENANT_SLUG", "").strip()
+            if preferred and preferred in self._configs_by_slug:
+                return self._configs_by_slug[preferred]
             return next(iter(self._configs_by_slug.values()))
         return TenantConfig.model_validate(
             deep_merge(self._defaults, {"tenant": {"id": "default", "name": "Default Agent"}})

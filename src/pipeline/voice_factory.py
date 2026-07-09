@@ -100,6 +100,11 @@ class VoiceFactory:
             from pipeline.providers.urdu_stt import UrduSTT
 
             return UrduSTT(language=locale, vad=vad)
+        elif provider == "soniox":
+            # Unified Urdu STT via Soniox streaming WS (livekit-plugins-soniox).
+            from pipeline.providers.soniox_stt import SonioxSTT
+
+            return SonioxSTT(language=locale, vad=vad)
         else:
             from livekit.agents import inference
 
@@ -193,6 +198,11 @@ class VoiceFactory:
             from pipeline.providers.urdu_tts import UrduTTS
 
             return UrduTTS(voice=voice_id, speed=speed, language=locale)
+        elif provider == "soniox":
+            # Unified Urdu TTS via Soniox streaming WS (livekit-plugins-soniox).
+            from pipeline.providers.soniox_tts import SonioxTTS
+
+            return SonioxTTS(voice=voice_id, speed=speed, language=locale)
         else:
             from livekit.agents import inference
 
@@ -216,6 +226,8 @@ class VoiceFactory:
             return _create_gemini_llm(config)
         elif provider in ("gemini_api", "google_ai_studio"):
             return _create_gemini_api_llm(config)
+        elif provider in ("inference", "livekit", "gemma"):
+            return _create_inference_llm(config)
         elif provider == "openai":
             return _create_openai_llm(config)
         elif provider == "lexantei":
@@ -296,6 +308,35 @@ def _create_gemini_api_llm(config: TenantConfig) -> Any:
         vertexai=False,
         api_key=api_key,
     )
+
+
+def _create_inference_llm(config: TenantConfig) -> Any:
+    """Create an LLM served by LiveKit Inference (e.g. Gemma 4 31B).
+
+    The model string follows the ``<provider>/<model>`` convention, e.g.
+    ``google/gemma-4-31b-it`` (LiveKit's latency-optimized default) or
+    ``google/gemini-2.5-flash`` as a higher-quality fallback. No separate API
+    key is needed on our side — LiveKit Inference authenticates with the same
+    ``LIVEKIT_API_KEY`` / ``LIVEKIT_API_SECRET`` the worker already uses, so the
+    whole stack (STT via Soniox, LLM here) stays on credentials we already have.
+    """
+    from livekit.agents import inference
+
+    model = config.llm.model or "google/gemma-4-31b-it"
+    # Lower temperature for reliable function calling (Gemma can otherwise emit a
+    # tool call as plain text). Passed through extra_kwargs since inference.LLM
+    # takes no direct temperature argument.
+    temperature = min(config.llm.temperature, 0.3)
+
+    register_service_route(
+        "inference_llm",
+        os.getenv("LIVEKIT_URL", "livekit-inference"),
+        provider="livekit_inference",
+        metadata={"model": model, "temperature": temperature},
+        notes="LiveKit Inference LLM generation requests (e.g. Gemma 4 31B)",
+    )
+
+    return inference.LLM(model=model, extra_kwargs={"temperature": temperature})
 
 
 def _create_openai_llm(config: TenantConfig) -> Any:
