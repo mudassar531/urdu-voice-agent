@@ -34,13 +34,23 @@ from tools.registry import get_tool_registry
 from utils.monitor_probe import is_monitor_probe
 from utils.phone import extract_called_phone, extract_caller_phone
 
-# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
-# server in one small (512MB) container. Computed here, before the plugin
-# imports below, because merely importing livekit.plugins.silero /
-# noise_cancellation triggers livekit-agents' plugin auto-registration (and
-# onnxruntime init for silero) regardless of whether load()/BVC() is ever
-# called -- skipping the call alone doesn't skip that cost.
-_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+# _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment: skip
+# loading plugins/models this deployment doesn't need. Two separate signals
+# feed it because RUN_TOKEN_SERVER=1 (co-locate worker + token server in one
+# container) and LOW_MEMORY_MODE=1 (this process alone is still on a 512MB
+# instance, e.g. after splitting the worker into its own Render service) are
+# independent decisions -- deriving this from RUN_TOKEN_SERVER alone silently
+# disabled every optimization the moment the worker was split out on its own.
+# Computed here, before the plugin imports below, because merely importing
+# livekit.plugins.silero / noise_cancellation triggers livekit-agents' plugin
+# auto-registration (and onnxruntime init for silero) regardless of whether
+# load()/BVC() is ever called -- skipping the call alone doesn't skip that cost.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) or os.getenv("LOW_MEMORY_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 if not _WEB_DEMO_MODE:
     from livekit.plugins import noise_cancellation, silero

@@ -66,7 +66,23 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_health_server(port: int | None = None) -> None:
     """Start health check server in background thread."""
-    port = port or int(os.getenv("HEALTH_PORT", "8082"))
+    if port is None:
+        # Standalone worker deployment (no co-located token server claiming
+        # $PORT): bind Render's assigned $PORT directly so the platform's
+        # port-detection/health check passes. When co-located with the token
+        # server (RUN_TOKEN_SERVER=1), that process already owns $PORT, so
+        # fall back to HEALTH_PORT to avoid a bind conflict.
+        run_token_server = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        render_port = os.getenv("PORT")
+        if not run_token_server and render_port:
+            port = int(render_port)
+        else:
+            port = int(os.getenv("HEALTH_PORT", "8082"))
 
     def _run():
         try:

@@ -17,16 +17,23 @@ from observability.network_topology import register_service_route
 
 logger = logging.getLogger(__name__)
 
-# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
-# server in one small (512MB) container, usually running only the urdu-demo
-# tenant (llm.provider: inference, voice providers: soniox) via
-# TENANT_ALLOWLIST. None of the plugins below are used by that tenant, but
-# merely IMPORTING a livekit.plugins.* module triggers its registration (and,
-# for silero, onnxruntime init) regardless of whether it's ever called --
-# skip importing them there to cut baseline RAM. A tenant that actually needs
-# one of these providers in web-demo mode fails loudly (see the matching
-# _create_*/load_vad functions) instead of silently misrouting.
-_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+# _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment (see
+# main.py for why this checks both RUN_TOKEN_SERVER and LOW_MEMORY_MODE --
+# they're independent signals: co-located-processes vs. this-process-alone-
+# is-still-512MB). Usually running only the urdu-demo tenant (llm.provider:
+# inference, voice providers: soniox) via TENANT_ALLOWLIST. None of the
+# plugins below are used by that tenant, but merely IMPORTING a
+# livekit.plugins.* module triggers its registration (and, for silero,
+# onnxruntime init) regardless of whether it's ever called -- skip importing
+# them there to cut baseline RAM. A tenant that actually needs one of these
+# providers in that mode fails loudly (see the matching _create_*/load_vad
+# functions) instead of silently misrouting.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) or os.getenv("LOW_MEMORY_MODE", "").strip().lower() in ("1", "true", "yes", "on")
 
 if not _WEB_DEMO_MODE:
     from livekit.plugins import google as _google_plugin  # Must import on main thread
