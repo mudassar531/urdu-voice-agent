@@ -2,13 +2,17 @@
 #
 # Fully Urdu, single-language. All-remote pipeline so the worker stays light
 # enough for a free-tier deploy:
-#   - STT: Speechmatics real-time (urdu_stt)     — SPEECHMATICS_API_KEY (free tier: 3,000 min/mo)
-#   - TTS: Azure Cognitive Services (urdu_tts)   — AZURE_SPEECH_KEY/_REGION (free tier)
+#   - STT: Soniox real-time WS (soniox)         — SONIOX_API_KEY
+#   - TTS: Soniox real-time WS (soniox)         — SONIOX_API_KEY (same key)
 #   - LLM: Gemma 4 31B via LiveKit Inference     — LIVEKIT_API_KEY/SECRET (no extra key)
 #
-# Switched from Soniox 2026-07-09 (Soniox has no free tier and the demo
-# org's balance ran out mid-call -- see workspace CLAUDE.md). Same
-# urdu_stt/urdu_tts providers hashim-girls-hostel already uses.
+# Tried switching to urdu_stt (Speechmatics) + urdu_tts (Azure) on 2026-07-09
+# after Soniox's org balance ran out -- reverted. Confirmed via memory
+# instrumentation that importing livekit-plugins-speechmatics alone (~120-150MB)
+# OOMs the 512MB web-demo instance, whose job-process baseline is already
+# ~300MB. Soniox's WS client is the only STT/TTS pairing that's been proven
+# to fit; hashim-girls-hostel's urdu_stt/urdu_tts need a bigger instance (see
+# workspace CLAUDE.md "Render deployment" for the full investigation).
 #
 # No phone number: visitors reach this agent from the landing page over WebRTC.
 # Routing pins here via SINGLE_TENANT_MODE=true + DEFAULT_TENANT_SLUG=urdu-demo
@@ -27,7 +31,7 @@ tenant:
 personality:
   system_prompt: |
     آپ ایک دوستانہ، مہذب اور ذہین اردو وائس اسسٹنٹ ہیں۔ یہ ایک لائیو ڈیمو ہے
-    جو LiveKit، Speechmatics، Azure اور Gemma کی مدد سے بنایا گیا ہے۔
+    جو LiveKit، Soniox اور Gemma کی مدد سے بنایا گیا ہے۔
 
     اہم ہدایات:
     - ہمیشہ صرف اردو میں، اردو رسمالخط (نستعلیق) میں جواب دیں — رومن اردو یا
@@ -52,12 +56,14 @@ languages:
   ask_on_start: false
 
 voice:
-  stt_provider: urdu_stt
-  tts_provider: urdu_tts
-  tts_voice_id: "ur-PK-UzmaNeural"
+  stt_provider: soniox
+  tts_provider: soniox
+  # Soniox multilingual voice; speaks whichever `language` it's given (ur).
+  # Override per-deploy with the SONIOX_TTS_VOICE env var.
+  tts_voice_id: "Maya"
   speed: 1.0
   voices:
-    ur: "ur-PK-UzmaNeural"
+    ur: "Maya"
 
 llm:
   provider: inference
