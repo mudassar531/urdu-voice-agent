@@ -12,7 +12,20 @@ import logging
 import os
 from typing import Any
 
-from livekit.plugins import google as _google_plugin  # Must import on main thread
+# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
+# server in one small (512MB) container, usually running only the urdu-demo
+# tenant (llm.provider: inference) via TENANT_ALLOWLIST. The Google plugin
+# pulls in the Vertex/genai SDK (grpc, protobuf, google-auth, ...) purely for
+# *other* tenants' `llm.provider: gemini`/`gemini_api` — skip importing it
+# there to cut baseline RAM; a tenant that actually needs Gemini in that mode
+# fails loudly (see _create_gemini_llm/_create_gemini_api_llm) instead of
+# silently misrouting.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+
+if not _WEB_DEMO_MODE:
+    from livekit.plugins import google as _google_plugin  # Must import on main thread
+else:
+    _google_plugin = None  # type: ignore[assignment]
 
 try:
     from livekit.plugins import openai as _openai_plugin  # noqa: F401
@@ -256,6 +269,13 @@ class VoiceFactory:
 
 def _create_gemini_llm(config: TenantConfig) -> Any:
     """Create Google Gemini LLM instance via Vertex AI (ADC from attached SA)."""
+    if _google_plugin is None:
+        raise RuntimeError(
+            "llm.provider 'gemini' needs the Google plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     from utils.vertex_region import PROJECT, resolve_location, vertex_endpoint
 
     location = resolve_location(config.llm.model)
@@ -286,6 +306,13 @@ def _create_gemini_api_llm(config: TenantConfig) -> Any:
     agent can run without a GCP service account / project. Set the tenant's
     ``llm.provider`` to ``gemini_api`` to enable.
     """
+    if _google_plugin is None:
+        raise RuntimeError(
+            "llm.provider 'gemini_api' needs the Google plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError(

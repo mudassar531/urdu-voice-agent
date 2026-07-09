@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_DIR = Path(__file__).parent.parent.parent / "configs" / "tenants"
 ENVIRONMENTS_FILE = Path(__file__).parent.parent.parent / "configs" / "environments.yaml"
 
+# Memory-constrained single-service deployments (e.g. the 512MB web-demo
+# Render instance) can restrict which tenant YAMLs get loaded at all, so
+# unused tenants don't pull in provider SDKs (e.g. hashim-girls-hostel's
+# Gemini dependency) that a smaller instance has no headroom for. Empty =
+# load every tenant YAML in the dir (existing behavior, unchanged). Matches
+# filenames by stem, e.g. TENANT_ALLOWLIST=urdu-demo -> only
+# configs/tenants/urdu-demo.yaml is loaded; other tenants stay in the repo,
+# just unloaded for this deployment.
+_TENANT_ALLOWLIST = {s.strip() for s in os.getenv("TENANT_ALLOWLIST", "").split(",") if s.strip()}
+
 
 def deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base. Override wins on conflicts."""
@@ -116,6 +126,9 @@ class ConfigLoader:
         loaded: list[TenantConfig] = []
         for yaml_file in sorted(self._config_dir.glob("*.yaml")):
             if yaml_file.name.startswith("_"):
+                continue
+            if _TENANT_ALLOWLIST and yaml_file.stem not in _TENANT_ALLOWLIST:
+                logger.info("Skipping tenant %r (not in TENANT_ALLOWLIST)", yaml_file.stem)
                 continue
             try:
                 config = self._load_tenant_yaml(yaml_file)
