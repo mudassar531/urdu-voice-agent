@@ -17,6 +17,20 @@ from observability.network_topology import register_service_route
 
 logger = logging.getLogger(__name__)
 
+
+def _memcheck_hook(label: str) -> None:
+    """TEMPORARY diagnostic: log process RSS. See main.py's _log_mem -- kept
+    as a separate copy here to avoid a circular import. Remove once the
+    urdu_stt/urdu_tts OOM is root-caused."""
+    try:
+        import resource
+
+        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        logger.info("[memcheck] %s: rss=%.1fMB", label, rss_kb / 1024)
+    except Exception as exc:
+        logger.warning("[memcheck] %s: failed (%s)", label, exc)
+
+
 # _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment (see
 # main.py for why this checks both RUN_TOKEN_SERVER and LOW_MEMORY_MODE --
 # they're independent signals: co-located-processes vs. this-process-alone-
@@ -100,13 +114,14 @@ class VoiceFactory:
             # for endpointing (falls back to a default Silero VAD if none passed).
             return NavaiWSSTT(language=locale.split("-")[0], vad=vad)
         elif provider == "urdu_stt":
-            # TODO(urdu): plug your Urdu STT engine here.
-            # UrduSTT is a STUB — see src/pipeline/providers/urdu_stt.py and the
-            # README "Urdu integration seams" section. It currently raises
-            # NotImplementedError until a real engine is wired.
+            # Real implementation (Speechmatics) -- see
+            # src/pipeline/providers/urdu_stt.py.
             from pipeline.providers.urdu_stt import UrduSTT
 
-            return UrduSTT(language=locale, vad=vad)
+            _memcheck_hook("after_urdu_stt_import")
+            instance = UrduSTT(language=locale, vad=vad)
+            _memcheck_hook("after_urdu_stt_construct")
+            return instance
         elif provider == "soniox":
             # Unified Urdu STT via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_stt import SonioxSTT
@@ -194,13 +209,14 @@ class VoiceFactory:
 
             return CustomTTS(voice=voice_id, speed=speed)
         elif provider == "urdu_tts":
-            # TODO(urdu): plug your Urdu TTS engine here.
-            # UrduTTS is a STUB — see src/pipeline/providers/urdu_tts.py and the
-            # README "Urdu integration seams" section. It currently raises
-            # NotImplementedError until a real engine is wired.
+            # Real implementation (Azure Cognitive Services) -- see
+            # src/pipeline/providers/urdu_tts.py.
             from pipeline.providers.urdu_tts import UrduTTS
 
-            return UrduTTS(voice=voice_id, speed=speed, language=locale)
+            _memcheck_hook("after_urdu_tts_import")
+            instance = UrduTTS(voice=voice_id, speed=speed, language=locale)
+            _memcheck_hook("after_urdu_tts_construct")
+            return instance
         elif provider == "soniox":
             # Unified Urdu TTS via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_tts import SonioxTTS
