@@ -66,6 +66,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("voice-agent")
 
+
+def _log_mem(label: str) -> None:
+    """TEMPORARY diagnostic: log process RSS to pinpoint per-import memory cost
+    on the 512MB web-demo instance. Remove once the urdu_stt/urdu_tts OOM is
+    root-caused."""
+    try:
+        import resource
+
+        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        logger.info("[memcheck] %s: rss=%.1fMB", label, rss_kb / 1024)
+    except Exception as exc:
+        logger.warning("[memcheck] %s: failed (%s)", label, exc)
+
+
 install_network_observer()
 register_service_route(
     "platform_api",
@@ -123,6 +137,7 @@ def prewarm(proc: JobProcess):
          handles, adding ~1.3s to pickup latency. Pre-warming here moves that
          cost off the critical path so calls land on a fully ready worker.
     """
+    _log_mem("job_process_baseline")
     if _WEB_DEMO_MODE:
         proc.userdata["vad"] = None
         logger.info("VAD: using AgentSession's bundled default (web-demo mode)")
@@ -281,6 +296,7 @@ async def entrypoint(ctx: JobContext):
         None if _WEB_DEMO_MODE else (ctx.proc.userdata.get("vad") or VoiceFactory.load_vad(config))
     )
 
+    _log_mem("before_stt_create")
     if use_greeting_stt_override:
         try:
             stt_inst = VoiceFactory.create_greeting_stt_for_language_choice(
@@ -303,8 +319,11 @@ async def entrypoint(ctx: JobContext):
     else:
         stt_inst = VoiceFactory.create_stt_for_language(config, effective_lang, vad=vad)
         logger.info("[stt_selection] using default STT class=%s", type(stt_inst).__name__)
+    _log_mem("after_stt_create")
     tts_inst = VoiceFactory.create_tts_for_language(config, effective_lang)
+    _log_mem("after_tts_create")
     llm_inst = VoiceFactory.create_llm(config)
+    _log_mem("after_llm_create")
     if telephony_tracker and hasattr(stt_inst, "_on_stt_duration"):
 
         def record_stt_duration(duration_ms=None):
@@ -492,6 +511,7 @@ def main():
     init_agent_info()
     logger.info("Voice agent worker starting...")
     logger.info(f"Tenants loaded: {tenant_registry.list_tenants()}")
+    _log_mem("main_process_baseline")
     cli.run_app(server)
 
 
