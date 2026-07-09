@@ -2,17 +2,20 @@
 #
 # Fully Urdu, single-language. All-remote pipeline so the worker stays light
 # enough for a free-tier deploy:
-#   - STT: Soniox real-time WS (soniox)         — SONIOX_API_KEY
-#   - TTS: Soniox real-time WS (soniox)         — SONIOX_API_KEY (same key)
+#   - STT: Azure Cognitive Services (azure_stt) — AZURE_SPEECH_KEY/_REGION
+#   - TTS: Azure Cognitive Services (urdu_tts)  — AZURE_SPEECH_KEY/_REGION (same)
 #   - LLM: Gemma 4 31B via LiveKit Inference     — LIVEKIT_API_KEY/SECRET (no extra key)
 #
-# Tried switching to urdu_stt (Speechmatics) + urdu_tts (Azure) on 2026-07-09
-# after Soniox's org balance ran out -- reverted. Confirmed via memory
-# instrumentation that importing livekit-plugins-speechmatics alone (~120-150MB)
-# OOMs the 512MB web-demo instance, whose job-process baseline is already
-# ~300MB. Soniox's WS client is the only STT/TTS pairing that's been proven
-# to fit; hashim-girls-hostel's urdu_stt/urdu_tts need a bigger instance (see
+# Tried urdu_stt (Speechmatics) + urdu_tts (Azure) on 2026-07-09 after
+# Soniox's org balance ran out -- reverted. Confirmed via memory
+# instrumentation that importing livekit-plugins-speechmatics alone
+# (~120-150MB) OOMs the 512MB web-demo instance on its own, before Azure's
+# import was ever reached. Trying Azure-only (STT+TTS both azure, no
+# Speechmatics) next -- pays the livekit-plugins-azure import cost exactly
+# once instead of stacking two heavy SDKs (see azure_stt.py's docstring and
 # workspace CLAUDE.md "Render deployment" for the full investigation).
+# Falls back to soniox (proven to fit, needs a funded account) if this
+# doesn't fit either.
 #
 # No phone number: visitors reach this agent from the landing page over WebRTC.
 # Routing pins here via SINGLE_TENANT_MODE=true + DEFAULT_TENANT_SLUG=urdu-demo
@@ -31,7 +34,7 @@ tenant:
 personality:
   system_prompt: |
     آپ ایک دوستانہ، مہذب اور ذہین اردو وائس اسسٹنٹ ہیں۔ یہ ایک لائیو ڈیمو ہے
-    جو LiveKit، Soniox اور Gemma کی مدد سے بنایا گیا ہے۔
+    جو LiveKit، Azure اور Gemma کی مدد سے بنایا گیا ہے۔
 
     اہم ہدایات:
     - ہمیشہ صرف اردو میں، اردو رسمالخط (نستعلیق) میں جواب دیں — رومن اردو یا
@@ -56,14 +59,12 @@ languages:
   ask_on_start: false
 
 voice:
-  stt_provider: soniox
-  tts_provider: soniox
-  # Soniox multilingual voice; speaks whichever `language` it's given (ur).
-  # Override per-deploy with the SONIOX_TTS_VOICE env var.
-  tts_voice_id: "Maya"
+  stt_provider: azure_stt
+  tts_provider: urdu_tts
+  tts_voice_id: "ur-PK-UzmaNeural"
   speed: 1.0
   voices:
-    ur: "Maya"
+    ur: "ur-PK-UzmaNeural"
 
 llm:
   provider: inference

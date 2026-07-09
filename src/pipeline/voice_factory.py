@@ -17,6 +17,19 @@ from observability.network_topology import register_service_route
 
 logger = logging.getLogger(__name__)
 
+
+def _memcheck_hook(label: str) -> None:
+    """TEMPORARY diagnostic: log process RSS. Remove once azure_stt's memory
+    footprint on the 512MB web-demo instance is confirmed."""
+    try:
+        import resource
+
+        rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        logger.info("[memcheck] %s: rss=%.1fMB", label, rss_kb / 1024)
+    except Exception as exc:
+        logger.warning("[memcheck] %s: failed (%s)", label, exc)
+
+
 # _WEB_DEMO_MODE gates memory-saving tradeoffs for a 512MB deployment (see
 # main.py for why this checks both RUN_TOKEN_SERVER and LOW_MEMORY_MODE --
 # they're independent signals: co-located-processes vs. this-process-alone-
@@ -109,6 +122,19 @@ class VoiceFactory:
             from pipeline.providers.urdu_stt import UrduSTT
 
             return UrduSTT(language=locale, vad=vad)
+        elif provider == "azure_stt":
+            # Same Urdu STT job as urdu_stt, backed by Azure instead of
+            # Speechmatics -- see src/pipeline/providers/azure_stt.py. Pairs
+            # with tts_provider: urdu_tts (also Azure) so a tenant pays the
+            # livekit-plugins-azure import cost once instead of stacking a
+            # second heavy STT SDK on top.
+            _memcheck_hook("before_azure_stt_import")
+            from pipeline.providers.azure_stt import AzureUrduSTT
+
+            _memcheck_hook("after_azure_stt_import")
+            instance = AzureUrduSTT(language=locale, vad=vad)
+            _memcheck_hook("after_azure_stt_construct")
+            return instance
         elif provider == "soniox":
             # Unified Urdu STT via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_stt import SonioxSTT
@@ -197,12 +223,14 @@ class VoiceFactory:
             return CustomTTS(voice=voice_id, speed=speed)
         elif provider == "urdu_tts":
             # Real implementation (Azure Cognitive Services) -- see
-            # src/pipeline/providers/urdu_tts.py. Not reached in practice on
-            # the 512MB web-demo instance -- urdu_stt's import alone already
-            # OOMs it first (see the urdu_stt branch above).
+            # src/pipeline/providers/urdu_tts.py.
+            _memcheck_hook("before_urdu_tts_import")
             from pipeline.providers.urdu_tts import UrduTTS
 
-            return UrduTTS(voice=voice_id, speed=speed, language=locale)
+            _memcheck_hook("after_urdu_tts_import")
+            instance = UrduTTS(voice=voice_id, speed=speed, language=locale)
+            _memcheck_hook("after_urdu_tts_construct")
+            return instance
         elif provider == "soniox":
             # Unified Urdu TTS via Soniox streaming WS (livekit-plugins-soniox).
             from pipeline.providers.soniox_tts import SonioxTTS
