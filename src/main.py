@@ -12,7 +12,6 @@ import os
 
 from dotenv import load_dotenv
 from livekit.agents import AgentServer, JobContext, JobProcess, RoomInputOptions, cli
-from livekit.plugins import noise_cancellation, silero
 
 from agents.factory import AgentFactory, set_factory
 from api.platform_client import get_platform_client
@@ -34,6 +33,20 @@ from pipeline.voice_factory import VoiceFactory
 from tools.registry import get_tool_registry
 from utils.monitor_probe import is_monitor_probe
 from utils.phone import extract_called_phone, extract_caller_phone
+
+# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
+# server in one small (512MB) container. Computed here, before the plugin
+# imports below, because merely importing livekit.plugins.silero /
+# noise_cancellation triggers livekit-agents' plugin auto-registration (and
+# onnxruntime init for silero) regardless of whether load()/BVC() is ever
+# called -- skipping the call alone doesn't skip that cost.
+_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+
+if not _WEB_DEMO_MODE:
+    from livekit.plugins import noise_cancellation, silero
+else:
+    noise_cancellation = None  # type: ignore[assignment]
+    silero = None  # type: ignore[assignment]
 
 load_dotenv()
 
@@ -72,11 +85,11 @@ set_factory(agent_factory)
 # initialize_process_timeout bumped from default 10s -> 30s to give the
 # Silero VAD download/load room to finish on first boot.
 # Override via NAVAI_NUM_IDLE_PROCESSES env var if needed.
-# Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token server
-# in one small container. Prewarmed idle workers each hold a full copy of the
-# model stack and OOM a 512MB free box, so force 0 there (the first call pays a
-# ~9s cold start instead). A dedicated/larger instance still prewarms normally.
-_WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
+# Web-demo mode (RUN_TOKEN_SERVER=1, _WEB_DEMO_MODE computed above) co-locates
+# the worker with the token server in one small container. Prewarmed idle
+# workers each hold a full copy of the model stack and OOM a 512MB free box,
+# so force 0 there (the first call pays a ~9s cold start instead). A
+# dedicated/larger instance still prewarms normally.
 _NUM_IDLE = 0 if _WEB_DEMO_MODE else int(os.getenv("NAVAI_NUM_IDLE_PROCESSES", "5"))
 _INIT_TIMEOUT = float(os.getenv("NAVAI_INIT_PROCESS_TIMEOUT", "30"))
 server = AgentServer(

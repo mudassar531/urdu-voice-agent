@@ -12,8 +12,6 @@ import logging
 import os
 from typing import Any
 
-from livekit.plugins import silero
-
 from config.schema import TenantConfig
 from observability.network_topology import register_service_route
 
@@ -21,22 +19,28 @@ logger = logging.getLogger(__name__)
 
 # Web-demo mode (RUN_TOKEN_SERVER=1) co-locates the worker with the token
 # server in one small (512MB) container, usually running only the urdu-demo
-# tenant (llm.provider: inference) via TENANT_ALLOWLIST. The Google plugin
-# pulls in the Vertex/genai SDK (grpc, protobuf, google-auth, ...) purely for
-# *other* tenants' `llm.provider: gemini`/`gemini_api` — skip importing it
-# there to cut baseline RAM; a tenant that actually needs Gemini in that mode
-# fails loudly (see _create_gemini_llm/_create_gemini_api_llm) instead of
-# silently misrouting.
+# tenant (llm.provider: inference, voice providers: soniox) via
+# TENANT_ALLOWLIST. None of the plugins below are used by that tenant, but
+# merely IMPORTING a livekit.plugins.* module triggers its registration (and,
+# for silero, onnxruntime init) regardless of whether it's ever called --
+# skip importing them there to cut baseline RAM. A tenant that actually needs
+# one of these providers in web-demo mode fails loudly (see the matching
+# _create_*/load_vad functions) instead of silently misrouting.
 _WEB_DEMO_MODE = os.getenv("RUN_TOKEN_SERVER", "").strip().lower() in ("1", "true", "yes", "on")
 
 if not _WEB_DEMO_MODE:
     from livekit.plugins import google as _google_plugin  # Must import on main thread
+    from livekit.plugins import silero
 else:
     _google_plugin = None  # type: ignore[assignment]
+    silero = None  # type: ignore[assignment]
 
-try:
-    from livekit.plugins import openai as _openai_plugin  # noqa: F401
-except ImportError:
+if not _WEB_DEMO_MODE:
+    try:
+        from livekit.plugins import openai as _openai_plugin  # noqa: F401
+    except ImportError:
+        _openai_plugin = None
+else:
     _openai_plugin = None
 
 # Language code mapping
@@ -233,6 +237,12 @@ class VoiceFactory:
     @staticmethod
     def load_vad(config: TenantConfig) -> silero.VAD:
         """Load Silero VAD with config-driven thresholds."""
+        if silero is None:
+            raise RuntimeError(
+                "Silero VAD is skipped in web-demo mode (RUN_TOKEN_SERVER=1) to save "
+                "memory; AgentSession's bundled default VAD is used instead (vad=None). "
+                "This tenant should not be reaching load_vad() in that mode."
+            )
         logger.info(
             f"Loading VAD: silence={config.vad.min_silence_duration}s, "
             f"threshold={config.vad.activation_threshold}"
@@ -347,6 +357,13 @@ def _create_inference_llm(config: TenantConfig) -> Any:
 
 def _create_openai_llm(config: TenantConfig) -> Any:
     """Create OpenAI-compatible LLM instance."""
+    if _openai_plugin is None and _WEB_DEMO_MODE:
+        raise RuntimeError(
+            "llm.provider 'openai' needs the OpenAI plugin, which is skipped in "
+            "web-demo mode (RUN_TOKEN_SERVER=1) to save memory. Unset "
+            "RUN_TOKEN_SERVER or drop this tenant from TENANT_ALLOWLIST for that "
+            "deployment."
+        )
     from livekit.plugins import openai
 
     base_url = os.getenv("OPENAI_BASE_URL")
